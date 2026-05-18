@@ -1,0 +1,187 @@
+# LibreTime stack — opt-in. Adds 9 services that broadcast scheduled audio
+# into FUNK's existing icecast (defined in compose.media.yml).
+#
+# Bring up alongside the base media compose, e.g.:
+#   docker compose --env-file infra/env/media.dev.env \
+#     -f infra/compose/compose.media.yml \
+#     -f infra/compose/compose.media.dev.override.yml \
+#     -f infra/compose/compose.media.libretime.yml \
+#     up -d
+#
+# First-run sequence is handled by scripts/libretime-setup.sh
+# (generates config.yml from template + runs DB migration).
+#
+# Naming: services are prefixed with `libretime-` to avoid colliding with
+# FUNK's media-plane services (icecast, hls, nginx). Network aliases let
+# LibreTime's bundled nginx find its upstreams under the names it expects
+# (`legacy`, `api`).
+
+name: funk-media
+
+x-libretime-callback-env: &libretime-callback-env
+  LIBRETIME_GENERAL_PUBLIC_URL: http://libretime-nginx:8080
+
+services:
+  libretime-postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: libretime
+      POSTGRES_DB: libretime
+      POSTGRES_PASSWORD: ${LIBRETIME_POSTGRES_PASSWORD:?LIBRETIME_POSTGRES_PASSWORD is required}
+    volumes:
+      - libretime_postgres_data:/var/lib/postgresql/data
+    networks:
+      - media_private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U libretime"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  libretime-rabbitmq:
+    image: rabbitmq:3.13-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_VHOST: /libretime
+      RABBITMQ_DEFAULT_USER: libretime
+      RABBITMQ_DEFAULT_PASS: ${LIBRETIME_RABBITMQ_PASSWORD:?LIBRETIME_RABBITMQ_PASSWORD is required}
+    networks:
+      - media_private
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  libretime-api:
+    image: ghcr.io/libretime/libretime-api:${LIBRETIME_VERSION:-4.5.0}
+    restart: unless-stopped
+    init: true
+    ulimits:
+      nofile: 1024
+    depends_on:
+      libretime-postgres:
+        condition: service_healthy
+      libretime-rabbitmq:
+        condition: service_healthy
+    environment:
+      <<: *libretime-callback-env
+    volumes:
+      - ../services/libretime/config.yml:/etc/libretime/config.yml:ro
+      - libretime_storage:/srv/libretime
+    networks:
+      media_private:
+        aliases: [api]
+
+  libretime-legacy:
+    image: ghcr.io/libretime/libretime-legacy:${LIBRETIME_VERSION:-4.5.0}
+    restart: unless-stopped
+    init: true
+    ulimits:
+      nofile: 1024
+    depends_on:
+      libretime-postgres:
+        condition: service_healthy
+      libretime-rabbitmq:
+        condition: service_healthy
+    environment:
+      <<: *libretime-callback-env
+    volumes:
+      - ../services/libretime/config.yml:/etc/libretime/config.yml:ro
+      - libretime_storage:/srv/libretime
+    networks:
+      media_private:
+        aliases: [legacy]
+
+  libretime-nginx:
+    image: ghcr.io/libretime/libretime-nginx:${LIBRETIME_VERSION:-4.5.0}
+    restart: unless-stopped
+    depends_on:
+      - libretime-legacy
+      - libretime-api
+    volumes:
+      - libretime_storage:/srv/libretime:ro
+    networks:
+      - media_private
+    expose:
+      - "8080"
+
+  libretime-analyzer:
+    image: ghcr.io/libretime/libretime-analyzer:${LIBRETIME_VERSION:-4.5.0}
+    restart: unless-stopped
+    init: true
+    ulimits:
+      nofile: 1024
+    depends_on:
+      libretime-rabbitmq:
+        condition: service_healthy
+    environment:
+      <<: *libretime-callback-env
+    volumes:
+      - ../services/libretime/config.yml:/etc/libretime/config.yml:ro
+      - libretime_storage:/srv/libretime
+    networks:
+      - media_private
+
+  libretime-worker:
+    image: ghcr.io/libretime/libretime-worker:${LIBRETIME_VERSION:-4.5.0}
+    restart: unless-stopped
+    init: true
+    ulimits:
+      nofile: 1024
+    depends_on:
+      libretime-rabbitmq:
+        condition: service_healthy
+    environment:
+      <<: *libretime-callback-env
+    volumes:
+      - ../services/libretime/config.yml:/etc/libretime/config.yml:ro
+    networks:
+      - media_private
+
+  libretime-playout:
+    image: ghcr.io/libretime/libretime-playout:${LIBRETIME_VERSION:-4.5.0}
+    restart: unless-stopped
+    init: true
+    ulimits:
+      nofile: 1024
+    depends_on:
+      libretime-rabbitmq:
+        condition: service_healthy
+    environment:
+      <<: *libretime-callback-env
+    volumes:
+      - ../services/libretime/config.yml:/etc/libretime/config.yml:ro
+      - libretime_playout:/app
+    networks:
+      - media_private
+
+  # liquidsoap broadcasts into FUNK's existing icecast service over media_private.
+  libretime-liquidsoap:
+    image: ghcr.io/libretime/libretime-playout:${LIBRETIME_VERSION:-4.5.0}
+    command: /usr/local/bin/libretime-liquidsoap
+    restart: unless-stopped
+    init: true
+    ulimits:
+      nofile: 1024
+    depends_on:
+      libretime-rabbitmq:
+        condition: service_healthy
+      icecast:
+        condition: service_healthy
+    environment:
+      <<: *libretime-callback-env
+    volumes:
+      - ../services/libretime/config.yml:/etc/libretime/config.yml:ro
+      - libretime_playout:/app
+    networks:
+      - media_private
+    expose:
+      - "8001"  # main harbor (live source input)
+      - "8002"  # show harbor
+
+volumes:
+  libretime_postgres_data:
+  libretime_playout:
+  libretime_storage:

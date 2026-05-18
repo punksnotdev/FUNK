@@ -5,7 +5,7 @@
 FUNK splits a tenant's deployment into two independent Docker Compose stacks:
 
 - **Control plane** (`compose.control.yml`): Postgres, MinIO, FUNK auth service, FUNK storage API, optional CMS, optional Caddy reverse proxy.
-- **Media plane** (`compose.media.yml`): Icecast, LibreTime, FFmpeg HLS generator, Nginx HLS origin, optional Caddy reverse proxy.
+- **Media plane** (`compose.media.yml`): Icecast, FFmpeg HLS generator, Nginx HLS origin, optional Caddy reverse proxy. LibreTime stack (`compose.media.libretime.yml`) is opt-in and broadcasts into the same Icecast.
 
 The planes have separate internal networks and can live on separate machines. The control plane talks to the media plane only over public endpoints (Icecast source URL, HLS origin URL).
 
@@ -22,11 +22,26 @@ The planes have separate internal networks and can live on separate machines. Th
                             ▼
 ┌───────────────────────── MEDIA PLANE ─────────────────────────┐
 │                                                                │
-│  libretime ──► icecast ──► hls (FFmpeg) ──► nginx origin       │
-│                                                ▲               │
-│                                                └── caddy ──► CDN
+│  ┌─ LibreTime (opt-in) ─────┐                                  │
+│  │ postgres + rabbitmq +    │                                  │
+│  │ api + legacy + nginx +   │                                  │
+│  │ analyzer + worker +      │                                  │
+│  │ playout + liquidsoap ────┼──► icecast (FUNK)                │
+│  └──────────────────────────┘            │                     │
+│                                          ▼                     │
+│                                  hls (FFmpeg)                  │
+│                                          │                     │
+│                                          ▼                     │
+│                                  nginx HLS origin              │
+│                                          ▲                     │
+│                                          └── caddy ──► CDN     │
 │                                                                │
 └────────────────────────────────────────────────────────────────┘
+
+The icecast `funk.mp3` mount is the integration boundary: anything that
+can publish a mountpoint there (LibreTime liquidsoap, an external DJ
+tool, the pink-noise test source, a manual ffmpeg) becomes the broadcast
+content. FUNK's HLS pipeline doesn't care who's on the other side.
 ```
 
 ## Why this split

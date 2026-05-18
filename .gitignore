@@ -16,6 +16,9 @@ data/
 hlsdata/
 *.log
 
+# materialized configs (templates are tracked)
+infra/services/libretime/config.yml
+
 # editor / OS
 .DS_Store
 .vscode/

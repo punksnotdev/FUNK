@@ -1,0 +1,12 @@
+name: funk-media
+
+services:
+  # LibreTime web UI on a different host port than FUNK's HLS origin (8080).
+  libretime-nginx:
+    ports:
+      - "${LIBRETIME_NGINX_HOST_PORT:-8090}:8080"
+  # Live source input ports (optional — for streaming from external sources to LibreTime).
+  libretime-liquidsoap:
+    ports:
+      - "${LIBRETIME_HARBOR_MAIN_HOST_PORT:-8001}:8001"
+      - "${LIBRETIME_HARBOR_SHOW_HOST_PORT:-8002}:8002"

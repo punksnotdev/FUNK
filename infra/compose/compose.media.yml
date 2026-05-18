@@ -40,21 +40,6 @@ services:
           -c:a libmp3lame -b:a 128k -ar 44100 -ac 2 \
           -f mp3 "icecast://source:$$ICECAST_SOURCE_PASSWORD@icecast:8000/funk.mp3"
 
-  libretime:
-    image: ${LIBRETIME_IMAGE:-libretime/libretime:latest}
-    restart: unless-stopped
-    profiles: ["with-libretime"]
-    depends_on:
-      icecast:
-        condition: service_healthy
-    environment:
-      LIBRETIME_DOMAIN: ${LIBRETIME_DOMAIN:-libretime.localhost}
-      LIBRETIME_ENABLE_ICECAST: "false"
-    networks:
-      - media_private
-    expose:
-      - "80"
-
   hls:
     build:
       context: ../services/media-hls

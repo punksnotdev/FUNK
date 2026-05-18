@@ -44,14 +44,44 @@ FUNK/
 ```bash
 # control plane (auth + storage + postgres + minio)
 cp infra/env/control.dev.env.example infra/env/control.dev.env
-cd infra/compose && docker compose --env-file ../env/control.dev.env -f compose.control.yml up -d
+docker compose --env-file infra/env/control.dev.env \
+  -f infra/compose/compose.control.yml \
+  -f infra/compose/compose.control.dev.override.yml \
+  up -d
 
-# media plane (icecast + libretime + hls + nginx)
-cp ../env/media.dev.env.example ../env/media.dev.env
-docker compose --env-file ../env/media.dev.env -f compose.media.yml up -d
+# media plane (icecast + hls + nginx) with a pink-noise test source
+cp infra/env/media.dev.env.example infra/env/media.dev.env
+docker compose --env-file infra/env/media.dev.env \
+  -f infra/compose/compose.media.yml \
+  -f infra/compose/compose.media.dev.override.yml \
+  --profile with-test-source \
+  up -d
 
 # demo POC
-cd ../../demo/svelte-poc && bun install && bun run dev
+cd demo/svelte-poc && cp -n .env.example .env && bun install && bun run dev
+# → http://localhost:5173
+```
+
+### Adding real LibreTime (scheduled programming)
+
+Replace the pink-noise test source with the full LibreTime scheduler. It broadcasts into FUNK's existing icecast, so the HLS pipeline is unchanged.
+
+```bash
+# 1. Stop the test source (if running)
+docker compose --env-file infra/env/media.dev.env \
+  -f infra/compose/compose.media.yml \
+  -f infra/compose/compose.media.dev.override.yml \
+  rm -sf media-source
+
+# 2. Generate secrets + config, pull images, migrate DB (idempotent)
+bash scripts/libretime-setup.sh
+
+# 3. Bring everything up
+bash scripts/libretime-up.sh
+
+# LibreTime web UI: http://localhost:8090  (default admin/admin — change immediately)
+# Upload audio in the UI; schedule a show; the stream appears at
+# http://localhost:8080/hls/master.m3u8
 ```
 
 ## License
