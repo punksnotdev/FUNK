@@ -1,0 +1,26 @@
+node_modules/
+.svelte-kit/
+build/
+dist/
+.turbo/
+
+# env (only .example files are tracked)
+infra/env/*.env
+!infra/env/*.env.example
+.env
+.env.*
+!.env.example
+
+# runtime data
+data/
+hlsdata/
+*.log
+
+# editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# bun
+bun.lockb

@@ -1,0 +1,11 @@
+{
+  email {$CADDY_ADMIN_EMAIL}
+}
+
+{$AUTH_PUBLIC_HOSTNAME} {
+  reverse_proxy auth:{$AUTH_PORT}
+}
+
+{$STORAGE_PUBLIC_HOSTNAME} {
+  reverse_proxy storage:{$STORAGE_PORT}
+}

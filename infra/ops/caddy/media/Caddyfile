@@ -1,0 +1,10 @@
+{
+  email {$CADDY_ADMIN_EMAIL}
+}
+
+{$ORIGIN_PUBLIC_HOSTNAME} {
+  encode zstd gzip
+  reverse_proxy nginx:8080 {
+    header_up X-Forwarded-Proto https
+  }
+}

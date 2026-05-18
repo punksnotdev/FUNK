@@ -1,0 +1,127 @@
+name: funk-media
+
+services:
+  icecast:
+    image: infiniteproject/icecast:latest
+    restart: unless-stopped
+    environment:
+      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:?ICECAST_SOURCE_PASSWORD is required}
+      ICECAST_ADMIN_PASSWORD: ${ICECAST_ADMIN_PASSWORD:?ICECAST_ADMIN_PASSWORD is required}
+      ICECAST_PASSWORD: ${ICECAST_RELAY_PASSWORD:?ICECAST_RELAY_PASSWORD is required}
+    networks:
+      - media_private
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8000 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  # Demo-only: streams pink-noise into Icecast so HLS has something to segment.
+  # Useful for `--profile with-test-source` in dev; do NOT enable in prod.
+  media-source:
+    image: linuxserver/ffmpeg:latest
+    profiles: ["with-test-source"]
+    restart: unless-stopped
+    depends_on:
+      icecast:
+        condition: service_healthy
+    environment:
+      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD}
+    networks:
+      - media_private
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        exec ffmpeg -hide_banner -loglevel warning -re \
+          -f lavfi -i "anoisesrc=color=pink:amplitude=0.05" \
+          -c:a libmp3lame -b:a 128k -ar 44100 -ac 2 \
+          -f mp3 "icecast://source:$$ICECAST_SOURCE_PASSWORD@icecast:8000/funk.mp3"
+
+  libretime:
+    image: ${LIBRETIME_IMAGE:-libretime/libretime:latest}
+    restart: unless-stopped
+    profiles: ["with-libretime"]
+    depends_on:
+      icecast:
+        condition: service_healthy
+    environment:
+      LIBRETIME_DOMAIN: ${LIBRETIME_DOMAIN:-libretime.localhost}
+      LIBRETIME_ENABLE_ICECAST: "false"
+    networks:
+      - media_private
+    expose:
+      - "80"
+
+  hls:
+    build:
+      context: ../services/media-hls
+    image: funk/media-hls:dev
+    restart: unless-stopped
+    depends_on:
+      icecast:
+        condition: service_healthy
+    environment:
+      ICECAST_SOURCE_URL: ${ICECAST_SOURCE_URL:?ICECAST_SOURCE_URL is required}
+      HLS_DIR: /hls
+      SEGMENT_SECONDS: ${SEGMENT_SECONDS:-6}
+      PLAYLIST_SIZE: ${PLAYLIST_SIZE:-6}
+      FFMPEG_LOGLEVEL: ${FFMPEG_LOGLEVEL:-warning}
+    volumes:
+      - hlsdata:/hls
+    networks:
+      - media_private
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /hls/master.m3u8 && grep -q '#EXTM3U' /hls/master.m3u8"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      hls:
+        condition: service_healthy
+    volumes:
+      - hlsdata:/usr/share/nginx/html/hls:ro
+      - ../services/media-nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - media_private
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/hls/master.m3u8 | grep -q '#EXTM3U'"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    profiles: ["with-edge"]
+    depends_on:
+      - nginx
+    environment:
+      CADDY_ADMIN_EMAIL: ${CADDY_ADMIN_EMAIL:-ops@example.org}
+      ORIGIN_PUBLIC_HOSTNAME: ${ORIGIN_PUBLIC_HOSTNAME:-}
+    volumes:
+      - ../ops/caddy/media/Caddyfile:/etc/caddy/Caddyfile:ro
+      - media_caddy_data:/data
+      - media_caddy_config:/config
+    networks:
+      - media_private
+    ports:
+      - "80:80"
+      - "443:443"
+
+networks:
+  media_private:
+    driver: bridge
+
+volumes:
+  hlsdata:
+  media_caddy_data:
+  media_caddy_config:

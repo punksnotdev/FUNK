@@ -1,0 +1,10 @@
+name: funk-media
+
+services:
+  icecast:
+    ports:
+      - "${ICECAST_HOST_PORT:-8000}:8000"
+
+  nginx:
+    ports:
+      - "${HLS_ORIGIN_HOST_PORT:-8080}:8080"

@@ -1,0 +1,18 @@
+{
+  "name": "funk",
+  "version": "0.0.1",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "demo/*"
+  ],
+  "scripts": {
+    "validate:compose": "bash scripts/validate-compose.sh",
+    "dev:control": "docker compose --env-file infra/env/control.dev.env -f infra/compose/compose.control.yml up",
+    "dev:media": "docker compose --env-file infra/env/media.dev.env -f infra/compose/compose.media.yml up",
+    "down:control": "docker compose --env-file infra/env/control.dev.env -f infra/compose/compose.control.yml down",
+    "down:media": "docker compose --env-file infra/env/media.dev.env -f infra/compose/compose.media.yml down"
+  }
+}
