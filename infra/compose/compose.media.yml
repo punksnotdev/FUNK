@@ -18,27 +18,36 @@ services:
       timeout: 5s
       retries: 10
 
-  # Demo-only: streams pink-noise into Icecast so HLS has something to segment.
-  # Useful for `--profile with-test-source` in dev; do NOT enable in prod.
-  media-source:
-    image: linuxserver/ffmpeg:latest
-    profiles: ["with-test-source"]
+  # Audio engine. Streams the priority chain (breaking > interrupt > live > main
+  # > white-noise fallback) into icecast `funk.mp3`. Controlled by funk-radio
+  # via telnet on port 1234. See infra/services/liquidsoap/funk.liq.
+  liquidsoap:
+    image: savonet/liquidsoap:v2.2.5
     restart: unless-stopped
     depends_on:
       icecast:
         condition: service_healthy
     environment:
+      ICECAST_HOST: icecast
       ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD}
+      HARBOR_LIVE_PASSWORD: ${HARBOR_LIVE_PASSWORD:?HARBOR_LIVE_PASSWORD is required}
+      HARBOR_BREAKING_PASSWORD: ${HARBOR_BREAKING_PASSWORD:?HARBOR_BREAKING_PASSWORD is required}
+    volumes:
+      - ../services/liquidsoap/funk.liq:/etc/liquidsoap/funk.liq:ro
+      - funk_schedule:/etc/funk
+      - funk_recordings:/var/funk/recordings
     networks:
       - media_private
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        exec ffmpeg -hide_banner -loglevel warning -re \
-          -f lavfi -i "anoisesrc=color=pink:amplitude=0.05" \
-          -c:a libmp3lame -b:a 128k -ar 44100 -ac 2 \
-          -f mp3 "icecast://source:$$ICECAST_SOURCE_PASSWORD@icecast:8000/funk.mp3"
+    expose:
+      - "1234"   # telnet control
+      - "8001"   # live harbor mount
+      - "8002"   # breaking harbor mount
+    command: ["liquidsoap", "/etc/liquidsoap/funk.liq"]
+    healthcheck:
+      test: ["CMD-SHELL", "(echo 'help'; sleep 0.5) | nc -w 2 127.0.0.1 1234 | grep -q '^|' || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
 
   hls:
     build:
@@ -48,6 +57,8 @@ services:
     depends_on:
       icecast:
         condition: service_healthy
+      liquidsoap:
+        condition: service_started
     environment:
       ICECAST_SOURCE_URL: ${ICECAST_SOURCE_URL:?ICECAST_SOURCE_URL is required}
       HLS_DIR: /hls
@@ -108,5 +119,7 @@ networks:
 
 volumes:
   hlsdata:
+  funk_schedule:
+  funk_recordings:
   media_caddy_data:
   media_caddy_config:
