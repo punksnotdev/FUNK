@@ -4,7 +4,6 @@ import { randomBytes } from "node:crypto";
 import postgres from "postgres";
 import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import type { Role } from "@funk/shared";
 import { env } from "./env";
 
 const sql = postgres(env.DATABASE_URL, { max: 10, idle_timeout: 30 });
@@ -25,19 +24,19 @@ const s3Public = new S3Client({
   forcePathStyle: true,
 });
 
-interface AuthSession {
+interface ResolvedCredential {
   id: string;
   tenant_id: string;
-  role: Role;
+  label: string;
 }
 
-async function resolveSession(authHeader: string | undefined): Promise<AuthSession | null> {
+async function resolveCredential(authHeader: string | undefined): Promise<ResolvedCredential | null> {
   if (!authHeader?.startsWith("Bearer ")) return null;
-  const res = await fetch(`${env.AUTH_INTERNAL_URL}/sessions/me`, {
+  const res = await fetch(`${env.AUTH_INTERNAL_URL}/v1/credentials/me`, {
     headers: { authorization: authHeader },
   });
   if (!res.ok) return null;
-  return (await res.json()) as AuthSession;
+  return (await res.json()) as ResolvedCredential;
 }
 
 const app = new Hono();
@@ -54,9 +53,8 @@ app.get("/health", async (c) => {
 });
 
 app.post("/uploads", async (c) => {
-  const session = await resolveSession(c.req.header("authorization"));
-  if (!session) return c.json({ error: "unauthorized" }, 401);
-  if (session.role === "listener") return c.json({ error: "forbidden" }, 403);
+  const credential = await resolveCredential(c.req.header("authorization"));
+  if (!credential) return c.json({ error: "unauthorized" }, 401);
 
   const form = await c.req.parseBody();
   const file = form.file;
@@ -75,14 +73,14 @@ app.post("/uploads", async (c) => {
   }));
 
   const [row] = await sql<Array<{ id: string; created_at: Date }>>`
-    INSERT INTO files (tenant_id, key, bucket, content_type, size_bytes, uploaded_by)
+    INSERT INTO files (tenant_id, key, bucket, content_type, size_bytes, uploaded_by_credential)
     VALUES (
       ${env.TENANT_ID},
       ${key},
       ${env.S3_BUCKET},
       ${file.type || "application/octet-stream"},
       ${file.size},
-      ${session.id}
+      ${credential.id}
     )
     RETURNING id, created_at
   `;

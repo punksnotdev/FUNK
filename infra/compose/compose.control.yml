@@ -75,7 +75,6 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       TENANT_ID: ${TENANT_ID:-default}
       ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:?ADMIN_BOOTSTRAP_TOKEN is required}
-      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-720}
     networks:
       - control_private
     expose:

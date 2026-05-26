@@ -1,21 +1,11 @@
-export type Role = "admin" | "contributor" | "listener";
+// Shared types for FUNK's internal services and consumer integrations.
+// FUNK is machine-facing (ADR-001); the only auth concept is a service credential.
 
-export interface Session {
+export interface Credential {
   id: string;
   tenant_id: string;
-  role: Role;
+  label: string;
   created_at: string;
-  expires_at: string;
-}
-
-export interface Invitation {
-  id: string;
-  tenant_id: string;
-  role: Role;
-  note: string | null;
-  created_at: string;
-  used_at: string | null;
-  revoked_at: string | null;
 }
 
 export interface FileRecord {

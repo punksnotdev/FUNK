@@ -9,5 +9,4 @@ export const env = {
   DATABASE_URL: required("DATABASE_URL"),
   TENANT_ID: process.env.TENANT_ID ?? "default",
   ADMIN_BOOTSTRAP_TOKEN: required("ADMIN_BOOTSTRAP_TOKEN"),
-  SESSION_TTL_HOURS: Number(process.env.SESSION_TTL_HOURS ?? 720),
 } as const;
