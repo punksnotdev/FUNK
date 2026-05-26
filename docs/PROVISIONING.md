@@ -1,8 +1,10 @@
 # Provisioning a FUNK Tenant
 
-This is the playbook for going from "fresh Ubuntu VPS" to "FUNK control + media planes running on two machines via Coolify." It's the path uaolaf will follow for its self-host MVP.
+This is the playbook for going from "fresh Ubuntu VPS" to "FUNK control + media planes running on two machines via Coolify." It's the typical path a consumer follows for a self-host MVP.
 
-Adapted from uaolaf v1's `coolify-deploy.md`; generalized for any FUNK tenant.
+Generalized from a prior platform's deploy playbook for any FUNK tenant.
+
+> **Direction (2026-05-26):** Some steps below (step 7's `with-libretime` profile, step 8's invitation-token bootstrap, step 9's LibreTime backup line) reflect the legacy implementation and are being revised per [ADR-001](adr/ADR-001-machine-facing-funk.md) and [ADR-002](adr/ADR-002-liquidsoap-radio-api.md). The target shape: drop the `with-libretime` profile, replace the invitation bootstrap with a single service-credential mint, and remove the LibreTime backup target. Treat this doc as transitional until the code catches up.
 
 ---
 
@@ -143,7 +145,7 @@ After at least one admin claims a session, you can rotate `ADMIN_BOOTSTRAP_TOKEN
 2. Mirror the MinIO bucket to a second S3-compatible destination.
 3. The media plane is **stateless** between deploys — HLS data is regenerated from Icecast. Back up only the LibreTime database (when in use) and Caddy's `/data` directory (for cert continuity).
 
-A starter script lives at `scripts/backup-postgres.sh` (TODO: port from uaolaf v1).
+A starter script lives at `scripts/backup-postgres.sh` (TODO: port from prior implementation).
 
 ---
 

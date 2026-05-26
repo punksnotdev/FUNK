@@ -1,12 +1,22 @@
 # FUNK
 
-**FUNK** is open-source backend infrastructure for movement platforms: radio, learning commons, and collective knowledge tools. Built tenant-first so platforms like [uaolaf](https://github.com/uaolaf) can self-host or run as a tenant of a shared FUNK instance.
+**FUNK** is open-source backend infrastructure for movement platforms: radio, learning commons, and collective knowledge tools. Built tenant-first so consumer platforms can self-host or run as a tenant of a shared FUNK instance.
 
 > Status: pre-alpha. v0 scaffold. APIs will change.
 
+## Direction (decided 2026-05-26)
+
+Three architecture decisions define FUNK's current shape — read them before contributing:
+
+- **[ADR-001](docs/adr/ADR-001-machine-facing-funk.md)** — FUNK is machine-facing. Consumers own all human identity; FUNK only issues service credentials.
+- **[ADR-002](docs/adr/ADR-002-liquidsoap-radio-api.md)** — The media plane runs liquidsoap directly behind a thin HTTPS control API. LibreTime is being removed.
+- **[ADR-003](docs/adr/ADR-003-funk-consumer-boundary.md)** — Build domain features in the consumer first; harvest into FUNK only when a second consumer needs the same thing.
+
+If you're building a consumer, start with [`docs/CONSUMER_BRIEF.md`](docs/CONSUMER_BRIEF.md).
+
 ## What FUNK gives a tenant
 
-- **Auth** — invitation tokens, sessions. Anonymous-listen by default; identified contributors via invitation.
+- **Service credentials** — long-lived bearer tokens, one per consumer platform. Anonymous-listen by default at the HLS origin; FUNK has no concept of human users (see [ADR-001](docs/adr/ADR-001-machine-facing-funk.md)).
 - **Storage** — S3-compatible object storage (MinIO) behind a small upload/serve API.
 - **Radio** — scheduled audio broadcasts via LibreTime → Icecast → FFmpeg HLS → Nginx origin. CDN-ready, low-bandwidth-friendly.
 - **Tenant scaffolding** — control + media docker-compose stacks split across two planes, with `dev` / `staging` / `prod` env templates and a Coolify deployment playbook.
@@ -41,6 +51,9 @@ FUNK/
 
 ## Quickstart (local dev)
 
+> Full runbook with endpoints, health checks, teardown, and gotchas: [docs/LOCAL_DEV.md](docs/LOCAL_DEV.md)
+
+
 ```bash
 # control plane (auth + storage + postgres + minio)
 cp infra/env/control.dev.env.example infra/env/control.dev.env
@@ -62,27 +75,11 @@ cd demo/svelte-poc && cp -n .env.example .env && bun install && bun run dev
 # → http://localhost:5173
 ```
 
-### Adding real LibreTime (scheduled programming)
+### Real broadcasting
 
-Replace the pink-noise test source with the full LibreTime scheduler. It broadcasts into FUNK's existing icecast, so the HLS pipeline is unchanged.
+For real shows, a consumer pushes a schedule to FUNK's radio API and hosts stream live via icecast. See [ADR-002](docs/adr/ADR-002-liquidsoap-radio-api.md) for the API surface and [`docs/CONSUMER_BRIEF.md`](docs/CONSUMER_BRIEF.md) for the integration model.
 
-```bash
-# 1. Stop the test source (if running)
-docker compose --env-file infra/env/media.dev.env \
-  -f infra/compose/compose.media.yml \
-  -f infra/compose/compose.media.dev.override.yml \
-  rm -sf media-source
-
-# 2. Generate secrets + config, pull images, migrate DB (idempotent)
-bash scripts/libretime-setup.sh
-
-# 3. Bring everything up
-bash scripts/libretime-up.sh
-
-# LibreTime web UI: http://localhost:8090  (default admin/admin — change immediately)
-# Upload audio in the UI; schedule a show; the stream appears at
-# http://localhost:8080/hls/master.m3u8
-```
+> The previously-documented LibreTime opt-in stack is being removed per [ADR-002](docs/adr/ADR-002-liquidsoap-radio-api.md). The legacy scripts (`scripts/libretime-setup.sh`, `scripts/libretime-up.sh`) and `compose.media.libretime.yml` represent the prior approach and will be deleted.
 
 ## License
 

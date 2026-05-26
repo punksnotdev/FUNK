@@ -1,5 +1,13 @@
 # FUNK Architecture (v0)
 
+> **Direction (2026-05-26):** Current decisions live in [`adr/`](adr/). In short:
+>
+> - FUNK is **machine-facing only**; consumers own human identity ([ADR-001](adr/ADR-001-machine-facing-funk.md)).
+> - The media plane runs **liquidsoap directly** behind a thin HTTPS control API; the LibreTime stack documented below is being phased out ([ADR-002](adr/ADR-002-liquidsoap-radio-api.md)).
+> - Domain features build in the consumer first; harvest into FUNK on rule-of-three ([ADR-003](adr/ADR-003-funk-consumer-boundary.md)).
+>
+> Diagram below describes the **target** shape; some sections (LibreTime opt-in stack, invitation-token auth) reflect the legacy implementation and will be revised as code catches up.
+
 ## Two-plane model
 
 FUNK splits a tenant's deployment into two independent Docker Compose stacks:
