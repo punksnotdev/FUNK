@@ -4,8 +4,6 @@ This is the playbook for going from "fresh Ubuntu VPS" to "FUNK control + media 
 
 Generalized from a prior platform's deploy playbook for any FUNK tenant.
 
-> **Direction (2026-05-26):** Some steps below (step 7's `with-libretime` profile, step 8's invitation-token bootstrap, step 9's LibreTime backup line) reflect the legacy implementation and are being revised per [ADR-001](adr/ADR-001-machine-facing-funk.md) and [ADR-002](adr/ADR-002-liquidsoap-radio-api.md). The target shape: drop the `with-libretime` profile, replace the invitation bootstrap with a single service-credential mint, and remove the LibreTime backup target. Treat this doc as transitional until the code catches up.
-
 ---
 
 ## Inventory
@@ -111,31 +109,32 @@ In Coolify:
 
 1. **New Resource → Docker Compose Empty**, target server: `funk-media-1`.
 2. Paste contents of `infra/compose/compose.media.yml`.
-3. Paste `infra/env/media.prod.env` (or staging).
-4. Set both profiles: `with-edge` (Caddy) and `with-libretime`.
-5. Deploy. Wait for `icecast`, `libretime`, `hls`, `nginx`, `caddy` to be healthy.
-6. Verify HLS is being produced:
+3. Paste `infra/env/media.prod.env` (or staging). All `__SET_VIA_SECRETS__` placeholders must be replaced — in particular `HARBOR_LIVE_PASSWORD` and `HARBOR_BREAKING_PASSWORD`.
+4. Set `AUTH_URL` to the public HTTPS URL of the control plane's auth service (e.g. `https://auth.<tenant>.example`). The radio service uses it to validate consumer credentials.
+5. Set the `with-edge` profile so Caddy starts and terminates TLS.
+6. Deploy. Wait for `icecast`, `liquidsoap`, `hls`, `nginx`, `radio`, `caddy` to be healthy.
+7. Verify HLS is being produced:
    ```bash
    curl -sSf https://stream.<tenant>.example/hls/master.m3u8 | head -10
    ```
 
 ---
 
-## Step 8 — Bootstrap the first admin invitation
+## Step 8 — Mint the first service credential
 
-Once `auth` is healthy, mint the first contributor invitation:
+Once `auth` is healthy, mint the consumer's service credential:
 
 ```bash
 ADMIN_TOKEN=...    # the ADMIN_BOOTSTRAP_TOKEN you set in env
-curl -sS -X POST https://auth.<tenant>.example/invitations \
+curl -sS -X POST https://auth.<tenant>.example/v1/credentials \
   -H "authorization: Bearer $ADMIN_TOKEN" \
   -H "content-type: application/json" \
-  -d '{"role":"admin","note":"first admin"}'
+  -d '{"label":"primary consumer"}'
 ```
 
-The response contains a `token` — share it with the first admin user. They claim it via `POST /sessions`.
+The response contains a `token` — store it in the consumer's secret manager and configure the consumer to send it as `Authorization: Bearer <token>` on every FUNK call (storage and radio).
 
-After at least one admin claims a session, you can rotate `ADMIN_BOOTSTRAP_TOKEN` (and redeploy) so the bootstrap token is no longer valid.
+Rotate `ADMIN_BOOTSTRAP_TOKEN` (and redeploy) once the consumer credential is issued, so the bootstrap token is no longer valid.
 
 ---
 
@@ -143,7 +142,7 @@ After at least one admin claims a session, you can rotate `ADMIN_BOOTSTRAP_TOKEN
 
 1. Schedule nightly `pg_dump` of the control plane Postgres → off-server destination (S3, B2, restic to a remote).
 2. Mirror the MinIO bucket to a second S3-compatible destination.
-3. The media plane is **stateless** between deploys — HLS data is regenerated from Icecast. Back up only the LibreTime database (when in use) and Caddy's `/data` directory (for cert continuity).
+3. The media plane is **mostly stateless** between deploys — HLS data is regenerated from Icecast, and the applied schedule re-converges on the next consumer PUT. Back up only Caddy's `/data` directory (for cert continuity) and the `funk_recordings` volume if you don't want to lose unsynced live-session recordings during a redeploy.
 
 A starter script lives at `scripts/backup-postgres.sh` (TODO: port from prior implementation).
 
