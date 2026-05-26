@@ -9,7 +9,7 @@
 Three architecture decisions define FUNK's current shape — read them before contributing:
 
 - **[ADR-001](docs/adr/ADR-001-machine-facing-funk.md)** — FUNK is machine-facing. Consumers own all human identity; FUNK only issues service credentials.
-- **[ADR-002](docs/adr/ADR-002-liquidsoap-radio-api.md)** — The media plane runs liquidsoap directly behind a thin HTTPS control API. LibreTime is being removed.
+- **[ADR-002](docs/adr/ADR-002-liquidsoap-radio-api.md)** — The media plane runs liquidsoap directly behind a thin HTTPS control API.
 - **[ADR-003](docs/adr/ADR-003-funk-consumer-boundary.md)** — Build domain features in the consumer first; harvest into FUNK only when a second consumer needs the same thing.
 
 If you're building a consumer, start with [`docs/CONSUMER_BRIEF.md`](docs/CONSUMER_BRIEF.md).
@@ -18,7 +18,7 @@ If you're building a consumer, start with [`docs/CONSUMER_BRIEF.md`](docs/CONSUM
 
 - **Service credentials** — long-lived bearer tokens, one per consumer platform. Anonymous-listen by default at the HLS origin; FUNK has no concept of human users (see [ADR-001](docs/adr/ADR-001-machine-facing-funk.md)).
 - **Storage** — S3-compatible object storage (MinIO) behind a small upload/serve API.
-- **Radio** — scheduled audio broadcasts via LibreTime → Icecast → FFmpeg HLS → Nginx origin. CDN-ready, low-bandwidth-friendly.
+- **Radio** — scheduled audio broadcasts via liquidsoap → Icecast → FFmpeg HLS → Nginx origin. CDN-ready, low-bandwidth-friendly. Live transmissions and breaking-news interrupts via a thin HTTPS control API (see [ADR-002](docs/adr/ADR-002-liquidsoap-radio-api.md)).
 - **Tenant scaffolding** — control + media docker-compose stacks split across two planes, with `dev` / `staging` / `prod` env templates and a Coolify deployment playbook.
 
 What FUNK explicitly does **not** do:
@@ -78,8 +78,6 @@ cd demo/svelte-poc && cp -n .env.example .env && bun install && bun run dev
 ### Real broadcasting
 
 For real shows, a consumer pushes a schedule to FUNK's radio API and hosts stream live via icecast. See [ADR-002](docs/adr/ADR-002-liquidsoap-radio-api.md) for the API surface and [`docs/CONSUMER_BRIEF.md`](docs/CONSUMER_BRIEF.md) for the integration model.
-
-> The previously-documented LibreTime opt-in stack is being removed per [ADR-002](docs/adr/ADR-002-liquidsoap-radio-api.md). The legacy scripts (`scripts/libretime-setup.sh`, `scripts/libretime-up.sh`) and `compose.media.libretime.yml` represent the prior approach and will be deleted.
 
 ## License
 
