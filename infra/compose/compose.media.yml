@@ -75,6 +75,43 @@ services:
       timeout: 5s
       retries: 10
 
+  # Thin HTTPS control API in front of liquidsoap. See apps/radio/ and ADR-002.
+  # The consumer (uaolaf-like product) calls these endpoints with its FUNK
+  # service credential to apply schedules, mint live credentials, push
+  # interrupts, and discover recordings.
+  radio:
+    build:
+      context: ../..
+      dockerfile: apps/radio/Dockerfile
+    image: funk/radio:dev
+    restart: unless-stopped
+    depends_on:
+      liquidsoap:
+        condition: service_started
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${RADIO_PORT:-4003}
+      TENANT_ID: ${TENANT_ID:-default}
+      AUTH_URL: ${AUTH_URL:?AUTH_URL is required (control-plane auth; e.g. http://host.docker.internal:4001 in dev, https://auth.funk.example in prod)}
+      LIQUIDSOAP_HOST: liquidsoap
+      LIQUIDSOAP_TELNET_PORT: 1234
+      SCHEDULE_FILE: /etc/funk/schedule.m3u
+      RECORDINGS_DIR: /var/funk/recordings
+      HARBOR_LIVE_PASSWORD: ${HARBOR_LIVE_PASSWORD}
+      HARBOR_BREAKING_PASSWORD: ${HARBOR_BREAKING_PASSWORD}
+    volumes:
+      - funk_schedule:/etc/funk
+      - funk_recordings:/var/funk/recordings
+    networks:
+      - media_private
+    expose:
+      - "${RADIO_PORT:-4003}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${RADIO_PORT:-4003}/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped

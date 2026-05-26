@@ -11,6 +11,14 @@ services:
       - "${HARBOR_LIVE_HOST_PORT:-8001}:8001"
       - "${HARBOR_BREAKING_HOST_PORT:-8002}:8002"
 
+  radio:
+    ports:
+      - "${RADIO_HOST_PORT:-4003}:${RADIO_PORT:-4003}"
+    # In dev, both planes typically run on the same Docker host. The radio
+    # service reaches auth on the control plane via the host gateway.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
   nginx:
     ports:
       - "${HLS_ORIGIN_HOST_PORT:-8080}:8080"
