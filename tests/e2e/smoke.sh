@@ -76,10 +76,15 @@ ok "control containers started"
 # -- bring up media plane --------------------------------------------------
 
 note "media plane up"
-# --build ensures we always run the current code. A second up -d handles
-# transient "No such container" races in compose 2.x on first startup.
-docker compose "${MEDIA_COMPOSE[@]}" up -d --build --quiet-pull || \
-  docker compose "${MEDIA_COMPOSE[@]}" up -d
+# --build ensures we always run the current code. Retry loop handles the
+# transient "No such container" race condition in Docker compose 2.x where
+# containers are reported non-existent right after creation.
+for _attempt in 1 2 3; do
+  if docker compose "${MEDIA_COMPOSE[@]}" up -d --build --quiet-pull 2>&1; then
+    break
+  fi
+  docker compose "${MEDIA_COMPOSE[@]}" up -d >/dev/null 2>&1 && break || true
+done
 ok "media containers started"
 
 # -- HTTP health (poll until 200 or timeout) -------------------------------
