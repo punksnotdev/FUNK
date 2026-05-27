@@ -44,7 +44,12 @@ services:
       - "8002"   # breaking harbor mount
     command: ["liquidsoap", "/etc/liquidsoap/funk.liq"]
     healthcheck:
-      test: ["CMD-SHELL", "(echo 'help'; sleep 0.5) | nc -w 2 127.0.0.1 1234 | grep -q '^|' || exit 1"]
+      # savonet/liquidsoap has python3 but no nc/curl; probe telnet over TCP.
+      test:
+        - "CMD"
+        - "python3"
+        - "-c"
+        - "import socket,sys;s=socket.create_connection(('127.0.0.1',1234),2);s.sendall(b'help\\n');d=b''\nwhile True:\n  c=s.recv(1024)\n  if not c: break\n  d+=c\n  if b'END' in d: break\nsys.exit(0 if b'|' in d else 1)"
       interval: 20s
       timeout: 5s
       retries: 10
