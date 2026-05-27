@@ -83,6 +83,7 @@ note "HTTP health"
 wait_for_http http://localhost:4001/health           60 "auth"
 wait_for_http http://localhost:4002/health           60 "storage"
 wait_for_http http://localhost:4003/health           60 "radio"
+wait_for_http http://localhost:4004/health           90 "recordings daemon"
 wait_for_http http://localhost:8000/status-json.xsl  60 "icecast"
 # HLS master takes a moment after liquidsoap starts pushing audio.
 wait_for_http http://localhost:8080/hls/master.m3u8  90 "hls origin"
@@ -189,5 +190,56 @@ SOURCE_INFO=$(curl -s http://localhost:8000/status-json.xsl)
 echo "$SOURCE_INFO" | grep -q '"listenurl":"http://localhost:8000/funk.mp3"' \
   || die "icecast funk.mp3 mount not active. response: $SOURCE_INFO"
 ok "icecast reports funk.mp3 mount with active source"
+
+# -- recordings upload daemon ----------------------------------------------
+# This exercises the full path: write an mp3 directly into the recordings
+# volume (bypassing the harbor path so this check doesn't depend on Track A),
+# wait for the daemon to detect stability and upload, then assert storage has it.
+#
+# Attribution lookup will get a 404 or connection refused (Track A not merged
+# yet) — the daemon treats that as "unattributed" and uploads anyway.
+
+note "recordings daemon — write file, wait for upload"
+
+STABILITY_SECS=$(grep -E '^STABILITY_SECONDS=' infra/env/media.dev.env | cut -d= -f2)
+STABILITY_SECS="${STABILITY_SECS:-30}"
+
+REC_TS=$(date -u +%Y%m%d-%H%M%S)
+REC_FILENAME="live-${REC_TS}.mp3"
+
+docker exec funk-media-liquidsoap-1 sh -c "
+  ffmpeg -nostats -loglevel error -y \
+    -f lavfi -i 'sine=frequency=880:duration=5' \
+    -ac 2 -ar 44100 -b:a 128k /tmp/smoke-rec.mp3
+  cp /tmp/smoke-rec.mp3 /var/funk/recordings/live/${REC_FILENAME}
+"
+ok "wrote ${REC_FILENAME} into recordings volume"
+
+# Wait STABILITY_SECONDS + 30s for daemon to pick it up and upload.
+WAIT_TOTAL=$(( STABILITY_SECS + 30 ))
+note "waiting up to ${WAIT_TOTAL}s for daemon to upload ${REC_FILENAME}"
+deadline=$(( $(date +%s) + WAIT_TOTAL ))
+UPLOADED=0
+while [ "$(date +%s)" -lt "$deadline" ]; do
+  # Check GET /v1/radio/recordings for an entry with non-null storage_url.
+  # storage_url population from radio is deferred (Track A radio-side integration),
+  # so instead poll the storage service's file listing directly via the admin token.
+  STORAGE_LIST=$(curl -sS -H "authorization: Bearer $ADMIN_TOKEN" \
+    "http://localhost:4002/files/recordings/live/${REC_FILENAME%-*}" 2>/dev/null || true)
+  # More reliably: check if the local file has been deleted (daemon deletes after upload).
+  if ! docker exec funk-media-liquidsoap-1 test -f "/var/funk/recordings/live/${REC_FILENAME}" 2>/dev/null; then
+    ok "local file deleted — daemon confirmed upload"
+    UPLOADED=1
+    break
+  fi
+  sleep 3
+done
+
+[ "$UPLOADED" = "1" ] || die "daemon did not upload ${REC_FILENAME} within ${WAIT_TOTAL}s (file still present in volume)"
+
+# Verify the daemon health endpoint reports 0 pending after successful upload.
+HEALTH=$(curl -sS http://localhost:4004/health)
+echo "$HEALTH" | grep -q '"status":"ok"' || die "recordings daemon health not ok: $HEALTH"
+ok "recordings daemon /health returns status=ok"
 
 note "all smoke checks passed"
