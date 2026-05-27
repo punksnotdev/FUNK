@@ -68,13 +68,18 @@ note "control plane up (clean volumes)"
 docker compose "${CONTROL_COMPOSE[@]}" down -v >/dev/null 2>&1 || true
 # We deliberately omit `--wait`: compose treats minio-init's clean exit (0)
 # as a failure with --wait, and we'd rather check HTTP health ourselves.
-docker compose "${CONTROL_COMPOSE[@]}" up -d --quiet-pull
+# A second up -d handles transient "No such container" races in compose 2.x.
+docker compose "${CONTROL_COMPOSE[@]}" up -d --quiet-pull || \
+  docker compose "${CONTROL_COMPOSE[@]}" up -d
 ok "control containers started"
 
 # -- bring up media plane --------------------------------------------------
 
 note "media plane up"
-docker compose "${MEDIA_COMPOSE[@]}" up -d --quiet-pull
+# --build ensures we always run the current code. A second up -d handles
+# transient "No such container" races in compose 2.x on first startup.
+docker compose "${MEDIA_COMPOSE[@]}" up -d --build --quiet-pull || \
+  docker compose "${MEDIA_COMPOSE[@]}" up -d
 ok "media containers started"
 
 # -- HTTP health (poll until 200 or timeout) -------------------------------
@@ -218,8 +223,7 @@ note "unauthorized harbor connection (bogus creds)"
 BOGUS_EXIT=0
 docker exec funk-media-liquidsoap-1 sh -c \
   'ffmpeg -re -f lavfi -i "sine=frequency=440:duration=3" -c:a libmp3lame -b:a 128k \
-    -content_type "audio/mpeg" \
-    icecast://bogus_user:bogus_password@liquidsoap:8001/live \
+    -f mp3 icecast://bogus_user:bogus_password@liquidsoap:8001/live \
     -loglevel error 2>/dev/null' || BOGUS_EXIT=$?
 [ "$BOGUS_EXIT" -ne 0 ] \
   || die "ffmpeg with bogus creds succeeded (expected failure)"
@@ -228,41 +232,47 @@ ok "bogus-creds connection rejected (ffmpeg exit $BOGUS_EXIT)"
 # -- authorized harbor connection -------------------------------------------
 
 note "authorized harbor connection"
-CONNECT_TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 docker exec -d funk-media-liquidsoap-1 sh -c \
   "ffmpeg -re -f lavfi -i 'sine=frequency=440:duration=15' -c:a libmp3lame -b:a 128k \
-    -content_type 'audio/mpeg' \
+    -f mp3 \
     icecast://${LIVE_USERNAME}:${LIVE_PASSWORD}@liquidsoap:8001/live \
     -loglevel error 2>/dev/null"
 ok "authorized ffmpeg started in background"
 
-sleep 5
-
-HARBOR_STATUS=$(python3 - <<'PY'
-import socket, sys
-s = socket.create_connection(("127.0.0.1", 1234), timeout=5)
-# liquidsoap 2.2 auto-assigns IDs: first input.harbor is "input.harbor",
-# second is "input.harbor.2" — live is the first defined in funk.liq.
-s.sendall(b"input.harbor.status\n")
-buf = b""
+# Wait for liquidsoap to confirm the source is connected.
+HARBOR_CONNECTED=false
+for _i in $(seq 1 20); do
+  STATUS=$(python3 -c "
+import socket
+s = socket.create_connection(('127.0.0.1', 1234), timeout=3)
+# liquidsoap 2.2 auto-assigns IDs: first input.harbor is 'input.harbor',
+# second is 'input.harbor.2' — live is the first defined in funk.liq.
+s.sendall(b'input.harbor.status\n')
+buf = b''
 while True:
     c = s.recv(1024)
     if not c: break
     buf += c
-    if b"END\r\n" in buf: break
+    if b'END\r\n' in buf: break
 print(buf.decode().strip())
-PY
-)
-echo "$HARBOR_STATUS" | grep -qi "connected" \
-  || die "live harbor not showing connected after authorized stream. status: $HARBOR_STATUS"
+  " 2>/dev/null || echo "")
+  if echo "$STATUS" | grep -qi "connected" && ! echo "$STATUS" | grep -qi "no source"; then
+    HARBOR_CONNECTED=true
+    break
+  fi
+  sleep 1
+done
+"$HARBOR_CONNECTED" || die "live harbor not connected after 20s. status: $STATUS"
 ok "liquidsoap input.harbor.status confirms source connected"
 
 # -- recording attribution --------------------------------------------------
 
 note "recording attribution"
+RADIO_INTERNAL_SECRET=$(grep -E '^RADIO_INTERNAL_SECRET=' infra/env/media.dev.env | cut -d= -f2)
+ATTRIB_TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 ATTRIB=$(curl -sS \
-  -H "authorization: Bearer dev_internal_secret_change_me" \
-  "http://localhost:4003/v1/radio/internal/recording-attribution?mount=live&started_at=${CONNECT_TS}")
+  -H "authorization: Bearer ${RADIO_INTERNAL_SECRET}" \
+  "http://localhost:4003/v1/radio/internal/recording-attribution?mount=live&started_at=${ATTRIB_TS}")
 echo "$ATTRIB" | grep -q '"credential_id"' \
   || die "recording-attribution did not return credential_id: $ATTRIB"
 echo "$ATTRIB" | grep -q '"label"' \
