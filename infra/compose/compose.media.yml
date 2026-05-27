@@ -153,6 +153,46 @@ services:
       - "80:80"
       - "443:443"
 
+  # Recording upload daemon. Watches /var/funk/recordings for completed MP3s,
+  # queries radio for session attribution, and uploads to FUNK storage.
+  #
+  # Reaches radio by service name on media_private. Reaches auth and storage
+  # via RECORDINGS_AUTH_URL and STORAGE_URL (host.docker.internal in dev;
+  # public HTTPS URLs in prod).
+  recordings:
+    build:
+      context: ../..
+      dockerfile: apps/recordings/Dockerfile
+    image: funk/recordings:dev
+    restart: unless-stopped
+    depends_on:
+      liquidsoap:
+        condition: service_started
+      radio:
+        condition: service_started
+    environment:
+      TZ: UTC
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${RECORDINGS_PORT:-4004}
+      AUTH_URL: ${RECORDINGS_AUTH_URL:?RECORDINGS_AUTH_URL is required (auth URL for recordings daemon)}
+      STORAGE_URL: ${STORAGE_URL:?STORAGE_URL is required}
+      RADIO_URL: http://radio:${RADIO_PORT:-4003}
+      RADIO_INTERNAL_SECRET: ${RADIO_INTERNAL_SECRET:?RADIO_INTERNAL_SECRET is required}
+      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:?ADMIN_BOOTSTRAP_TOKEN is required}
+      RECORDINGS_DIR: /var/funk/recordings
+      STABILITY_SECONDS: ${STABILITY_SECONDS:-30}
+    volumes:
+      - funk_recordings:/var/funk/recordings
+    networks:
+      - media_private
+    expose:
+      - "${RECORDINGS_PORT:-4004}"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${RECORDINGS_PORT:-4004}/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
 networks:
   media_private:
     driver: bridge
