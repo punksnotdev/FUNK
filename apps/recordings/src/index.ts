@@ -159,6 +159,9 @@ async function uploadRecording(
 
   const form = new FormData();
   form.append("file", Bun.file(filepath), storageKey);
+  // storage server honors this key (sanitized + tenant-prefixed) so the
+  // attributed filename survives the round-trip to MinIO.
+  form.append("storage_key", storageKey);
 
   const res = await fetch(`${env.STORAGE_URL}/uploads`, {
     method: "POST",
@@ -171,9 +174,32 @@ async function uploadRecording(
     throw new Error(`storage upload failed: ${res.status} ${body}`);
   }
 
-  const data = (await res.json()) as { key: string };
-  // Return the storage URL that consumers can use to fetch the file.
-  return `${env.STORAGE_URL}/files/${data.key}`;
+  const data = (await res.json()) as { key: string; size_bytes: number };
+  return `${env.STORAGE_PUBLIC_URL}/files/${data.key}`;
+}
+
+async function notifyRadioOfUpload(payload: {
+  mount: "live" | "breaking";
+  started_at: string;
+  storage_key: string;
+  storage_url: string;
+  duration_seconds: number | null;
+  credential_id?: string;
+  credential_label?: string;
+}): Promise<void> {
+  const res = await fetch(`${env.RADIO_URL}/v1/radio/internal/recording-uploaded`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.RADIO_INTERNAL_SECRET}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    // Non-fatal — the recording is uploaded, radio's index is just stale.
+    console.warn(`radio notify failed: ${res.status} ${body}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +246,15 @@ async function processFile(entry: PendingFile): Promise<void> {
 
     const storageUrl = await uploadRecording(entry.filepath, storageKey, meta);
     console.log(`uploaded ${entry.filepath} → ${storageUrl}`);
+
+    await notifyRadioOfUpload({
+      mount: entry.mount,
+      started_at: entry.started_at,
+      storage_key: storageKey,
+      storage_url: storageUrl,
+      duration_seconds: duration,
+      ...(attribution ? { credential_id: attribution.credential_id, credential_label: attribution.label } : {}),
+    });
 
     // Delete the local file after a confirmed upload.
     await unlink(entry.filepath).catch((e) => console.warn(`unlink failed: ${e}`));

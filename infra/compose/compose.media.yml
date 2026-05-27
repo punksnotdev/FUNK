@@ -157,8 +157,8 @@ services:
   # queries radio for session attribution, and uploads to FUNK storage.
   #
   # Reaches radio by service name on media_private. Reaches auth and storage
-  # via RECORDINGS_AUTH_URL and STORAGE_URL (host.docker.internal in dev;
-  # public HTTPS URLs in prod).
+  # via RECORDINGS_AUTH_URL and STORAGE_URL (both DNS aliases on the shared
+  # funk_dev bridge in dev; public HTTPS URLs in prod).
   recordings:
     build:
       context: ../..
@@ -176,6 +176,10 @@ services:
       PORT: ${RECORDINGS_PORT:-4004}
       AUTH_URL: ${RECORDINGS_AUTH_URL:?RECORDINGS_AUTH_URL is required (auth URL for recordings daemon)}
       STORAGE_URL: ${STORAGE_URL:?STORAGE_URL is required}
+      # Public-facing URL that ends up in recordings' storage_url field. In
+      # dev this is the host-mapped storage port (consumers run on the host);
+      # in prod set to the public HTTPS URL.
+      STORAGE_PUBLIC_URL: ${STORAGE_PUBLIC_URL:-${STORAGE_URL}}
       RADIO_URL: http://radio:${RADIO_PORT:-4003}
       RADIO_INTERNAL_SECRET: ${RADIO_INTERNAL_SECRET:?RADIO_INTERNAL_SECRET is required}
       ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:?ADMIN_BOOTSTRAP_TOKEN is required}

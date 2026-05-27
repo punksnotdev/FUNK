@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { randomUUID, randomBytes } from "node:crypto";
-import { readdir, stat, writeFile, mkdir } from "node:fs/promises";
+import { writeFile, mkdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { env } from "./env";
 import {
@@ -183,14 +183,18 @@ async function writePlaylist(entries: ScheduleEntry[]): Promise<void> {
 interface RecordingEntry {
   id: string;
   source: "live" | "breaking";
-  filename: string;
   started_at: string;
   duration_seconds: number | null;
-  size_bytes: number;
-  storage_url: string | null;
+  size_bytes: number | null;
+  storage_url: string;
+  storage_key: string;
   credential_id: string | null;
   credential_label: string | null;
 }
+
+// Populated by the recordings daemon via POST /v1/radio/internal/recording-uploaded
+// after each successful upload. Keyed by storage_key so retries are idempotent.
+const uploadedRecordings = new Map<string, RecordingEntry>();
 
 // Filename shape comes from funk.liq's output.file templates:
 //   live-YYYYMMDD-HHMMSS.mp3
@@ -227,39 +231,12 @@ function findAttribution(
   return null;
 }
 
-async function listRecordings(sinceIso: string | undefined): Promise<RecordingEntry[]> {
+function listRecordings(sinceIso: string | undefined): RecordingEntry[] {
   const since = sinceIso ? new Date(sinceIso).getTime() : 0;
-  const results: RecordingEntry[] = [];
-  for (const subdir of ["live", "breaking"] as const) {
-    const dir = join(env.RECORDINGS_DIR, subdir);
-    let files: string[];
-    try {
-      files = await readdir(dir);
-    } catch {
-      continue;
-    }
-    for (const filename of files) {
-      const parsed = parseRecordingFilename(filename);
-      if (!parsed) continue;
-      const filepath = join(dir, filename);
-      const st = await stat(filepath).catch(() => null);
-      if (!st) continue;
-      if (new Date(parsed.started_at).getTime() < since) continue;
-      const attribution = findAttribution(parsed.source, parsed.started_at);
-      results.push({
-        id: filename,
-        source: parsed.source,
-        filename,
-        started_at: parsed.started_at,
-        duration_seconds: null,
-        size_bytes: st.size,
-        storage_url: null,
-        credential_id: attribution?.credential_id ?? null,
-        credential_label: attribution?.label ?? null,
-      });
-    }
-  }
-  results.sort((a, b) => a.started_at.localeCompare(b.started_at));
+  const results = [...uploadedRecordings.values()].filter(
+    (e) => new Date(e.started_at).getTime() >= since,
+  );
+  results.sort((a, b) => b.started_at.localeCompare(a.started_at));
   return results;
 }
 
@@ -338,6 +315,39 @@ app.get("/v1/radio/internal/recording-attribution", async (c) => {
   const attribution = findAttribution(mount, startedAt);
   if (!attribution) return c.json({ error: "not found" }, 404);
   return c.json({ credential_id: attribution.credential_id, label: attribution.label }, 200);
+});
+
+// Daemon notifies radio after a successful upload. Idempotent on storage_key
+// (re-notifications overwrite the entry, which is what we want on retry).
+app.post("/v1/radio/internal/recording-uploaded", async (c) => {
+  if (!requireInternalSecret(c.req.header("authorization"))) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    mount?: "live" | "breaking";
+    started_at?: string;
+    storage_key?: string;
+    storage_url?: string;
+    duration_seconds?: number | null;
+    size_bytes?: number | null;
+    credential_id?: string | null;
+    credential_label?: string | null;
+  } | null;
+  if (!body?.mount || !body?.started_at || !body?.storage_key || !body?.storage_url) {
+    return c.json({ error: "mount, started_at, storage_key, storage_url required" }, 400);
+  }
+  uploadedRecordings.set(body.storage_key, {
+    id: body.storage_key,
+    source: body.mount,
+    started_at: body.started_at,
+    duration_seconds: body.duration_seconds ?? null,
+    size_bytes: body.size_bytes ?? null,
+    storage_url: body.storage_url,
+    storage_key: body.storage_key,
+    credential_id: body.credential_id ?? null,
+    credential_label: body.credential_label ?? null,
+  });
+  return c.json({ recorded: true }, 200);
 });
 
 // All other /v1/* routes require a valid FUNK service credential.
@@ -488,14 +498,9 @@ app.post("/v1/radio/interrupt/live", async (c) => {
 
 // recordings (discovery — storage_url populated by daemon after upload)
 
-app.get("/v1/radio/recordings", async (c) => {
+app.get("/v1/radio/recordings", (c) => {
   const since = c.req.query("since") ?? undefined;
-  try {
-    const recordings = await listRecordings(since);
-    return c.json({ recordings });
-  } catch (err) {
-    return c.json({ recordings: [], error: String(err) }, 503);
-  }
+  return c.json({ recordings: listRecordings(since) });
 });
 
 const port = env.PORT;

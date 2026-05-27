@@ -66,11 +66,11 @@ ADMIN_TOKEN=$(grep -E '^ADMIN_BOOTSTRAP_TOKEN=' infra/env/control.dev.env | cut 
 
 note "control plane up (clean volumes)"
 docker compose "${CONTROL_COMPOSE[@]}" down -v >/dev/null 2>&1 || true
-# We deliberately omit `--wait`: compose treats minio-init's clean exit (0)
-# as a failure with --wait, and we'd rather check HTTP health ourselves.
-# A second up -d handles transient "No such container" races in compose 2.x.
-docker compose "${CONTROL_COMPOSE[@]}" up -d --quiet-pull || \
-  docker compose "${CONTROL_COMPOSE[@]}" up -d
+# --build ensures auth + storage run the current source. Compose treats
+# minio-init's clean exit (0) as a failure with --wait, so we skip --wait
+# and rely on HTTP health probes below.
+docker compose "${CONTROL_COMPOSE[@]}" up -d --build --quiet-pull || \
+  docker compose "${CONTROL_COMPOSE[@]}" up -d --build
 ok "control containers started"
 
 # -- bring up media plane --------------------------------------------------
@@ -333,5 +333,39 @@ done
 HEALTH=$(curl -sS http://localhost:4004/health)
 echo "$HEALTH" | grep -q '"status":"ok"' || die "recordings daemon health not ok: $HEALTH"
 ok "recordings daemon /health returns status=ok"
+
+# -- /v1/radio/recordings populated by daemon notification ------------------
+
+note "radio recordings index populated by daemon notification"
+RECS=""
+for _i in $(seq 1 10); do
+  RECS=$(curl -sS -H "authorization: Bearer $TOKEN" http://localhost:4003/v1/radio/recordings)
+  if echo "$RECS" | grep -q '"storage_url"'; then break; fi
+  sleep 1
+done
+echo "$RECS" | grep -q '"storage_url":"http' \
+  || die "GET /v1/radio/recordings did not return a storage_url: $RECS"
+ok "GET /v1/radio/recordings includes storage_url"
+
+REC_URL=$(echo "$RECS" | python3 -c '
+import sys, json
+recs = json.load(sys.stdin).get("recordings", [])
+match = next((r for r in recs if r.get("source") == "live"), None)
+print(match["storage_url"] if match else "")
+')
+[ -n "$REC_URL" ] || die "no live recording entry found in recordings index"
+ok "extracted storage_url: $REC_URL"
+
+# Fetch it (-L follows the 302 redirect storage emits to a MinIO presigned URL).
+curl -fsSL "$REC_URL" -o /tmp/funk_e2e_rec.mp3
+SIZE=$(stat -c%s /tmp/funk_e2e_rec.mp3)
+[ "$SIZE" -gt 1000 ] || die "fetched recording too small ($SIZE bytes)"
+# MP3 files start with 'ID3' or 0xFF 0xFB (MPEG frame sync).
+FIRST3=$(od -An -tx1 -N3 /tmp/funk_e2e_rec.mp3 | tr -d ' \n')
+case "$FIRST3" in
+  494433*) ok "fetched recording is ID3-tagged mp3 ($SIZE bytes)" ;;
+  fffb*|fff3*|fff2*) ok "fetched recording is raw mp3 ($SIZE bytes)" ;;
+  *) die "fetched recording not mp3-shaped (first bytes: $FIRST3, size: $SIZE)" ;;
+esac
 
 note "all smoke checks passed"

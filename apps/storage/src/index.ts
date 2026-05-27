@@ -52,6 +52,16 @@ app.get("/health", async (c) => {
   }
 });
 
+// Reject anything outside [a-zA-Z0-9._/-], leading slashes, .. traversal,
+// or longer than 256 chars. The tenant_id prefix is added by the server.
+function sanitizeStorageKey(raw: string): string | null {
+  if (!raw || raw.length > 256) return null;
+  if (raw.startsWith("/")) return null;
+  if (raw.split("/").some((seg) => seg === "" || seg === "." || seg === "..")) return null;
+  if (!/^[a-zA-Z0-9._/-]+$/.test(raw)) return null;
+  return raw;
+}
+
 app.post("/uploads", async (c) => {
   const credential = await resolveCredential(c.req.header("authorization"));
   if (!credential) return c.json({ error: "unauthorized" }, 401);
@@ -61,8 +71,16 @@ app.post("/uploads", async (c) => {
   if (!(file instanceof File)) return c.json({ error: "file field required" }, 400);
   if (file.size > env.MAX_UPLOAD_BYTES) return c.json({ error: "file too large" }, 413);
 
-  const ext = file.name.includes(".") ? "." + file.name.split(".").pop() : "";
-  const key = `${env.TENANT_ID}/${new Date().toISOString().slice(0, 10)}/${randomBytes(16).toString("hex")}${ext}`;
+  // Honor a client-supplied storage_key when present and well-formed. The
+  // tenant prefix is always enforced by the server.
+  const suppliedKey = typeof form.storage_key === "string" ? sanitizeStorageKey(form.storage_key) : null;
+  let key: string;
+  if (suppliedKey) {
+    key = `${env.TENANT_ID}/${suppliedKey}`;
+  } else {
+    const ext = file.name.includes(".") ? "." + file.name.split(".").pop() : "";
+    key = `${env.TENANT_ID}/${new Date().toISOString().slice(0, 10)}/${randomBytes(16).toString("hex")}${ext}`;
+  }
   const buffer = new Uint8Array(await file.arrayBuffer());
 
   await s3.send(new PutObjectCommand({
@@ -72,6 +90,9 @@ app.post("/uploads", async (c) => {
     ContentType: file.type || "application/octet-stream",
   }));
 
+  // ON CONFLICT: client-supplied keys may be re-uploaded (idempotent retry).
+  // We overwrite the row to reflect the latest upload metadata; the underlying
+  // S3 PUT above has already overwritten the object bytes.
   const [row] = await sql<Array<{ id: string; created_at: Date }>>`
     INSERT INTO files (tenant_id, key, bucket, content_type, size_bytes, uploaded_by_credential)
     VALUES (
@@ -82,6 +103,10 @@ app.post("/uploads", async (c) => {
       ${file.size},
       ${credential.id}
     )
+    ON CONFLICT (key) DO UPDATE SET
+      content_type = EXCLUDED.content_type,
+      size_bytes = EXCLUDED.size_bytes,
+      uploaded_by_credential = EXCLUDED.uploaded_by_credential
     RETURNING id, created_at
   `;
 

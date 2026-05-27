@@ -10,8 +10,12 @@ export const env = {
   // Where to find FUNK's auth service (to mint the daemon's own credential).
   AUTH_URL: required("AUTH_URL"),
 
-  // Where to find FUNK's storage service (to upload recordings).
+  // Where to find FUNK's storage service for uploading (internal DNS in dev).
   STORAGE_URL: required("STORAGE_URL"),
+
+  // Public-facing storage URL embedded in the storage_url we hand to radio.
+  // Falls back to STORAGE_URL when the two are the same (prod).
+  STORAGE_PUBLIC_URL: process.env.STORAGE_PUBLIC_URL ?? required("STORAGE_URL"),
 
   // Where to find the radio service (for attribution lookups).
   RADIO_URL: process.env.RADIO_URL ?? "http://radio:4003",
