@@ -190,4 +190,81 @@ echo "$SOURCE_INFO" | grep -q '"listenurl":"http://localhost:8000/funk.mp3"' \
   || die "icecast funk.mp3 mount not active. response: $SOURCE_INFO"
 ok "icecast reports funk.mp3 mount with active source"
 
+# -- Track A: per-host harbor credentials ------------------------------------
+
+note "harbor credentials"
+
+CRED=$(curl -sS -X POST http://localhost:4003/v1/radio/live/credentials \
+  -H "authorization: Bearer $TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"label":"smoke test host","ttl_seconds":300}')
+echo "$CRED" | grep -q '"password"' \
+  || die "POST /v1/radio/live/credentials missing password field: $CRED"
+echo "$CRED" | grep -q '"credential_id"' \
+  || die "POST /v1/radio/live/credentials missing credential_id field: $CRED"
+ok "credential minted with per-host password (not a shared password)"
+
+LIVE_USERNAME=$(echo "$CRED" | python3 -c 'import sys,json;print(json.load(sys.stdin)["username"])')
+LIVE_PASSWORD=$(echo "$CRED" | python3 -c 'import sys,json;print(json.load(sys.stdin)["password"])')
+LIVE_CRED_ID=$(echo  "$CRED" | python3 -c 'import sys,json;print(json.load(sys.stdin)["credential_id"])')
+[ -n "$LIVE_USERNAME" ] || die "no username in credential"
+[ -n "$LIVE_PASSWORD" ] || die "no password in credential"
+[ -n "$LIVE_CRED_ID"  ] || die "no credential_id in credential"
+ok "credential fields parsed: id=${LIVE_CRED_ID:0:8}... user=$LIVE_USERNAME"
+
+# -- unauthorized harbor connection (bogus creds) ---------------------------
+
+note "unauthorized harbor connection (bogus creds)"
+BOGUS_EXIT=0
+docker exec funk-media-liquidsoap-1 sh -c \
+  'ffmpeg -re -f lavfi -i "sine=frequency=440:duration=3" -c:a libmp3lame -b:a 128k \
+    -content_type "audio/mpeg" \
+    icecast://bogus_user:bogus_password@liquidsoap:8001/live \
+    -loglevel error 2>/dev/null' || BOGUS_EXIT=$?
+[ "$BOGUS_EXIT" -ne 0 ] \
+  || die "ffmpeg with bogus creds succeeded (expected failure)"
+ok "bogus-creds connection rejected (ffmpeg exit $BOGUS_EXIT)"
+
+# -- authorized harbor connection -------------------------------------------
+
+note "authorized harbor connection"
+CONNECT_TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+docker exec -d funk-media-liquidsoap-1 sh -c \
+  "ffmpeg -re -f lavfi -i 'sine=frequency=440:duration=15' -c:a libmp3lame -b:a 128k \
+    -content_type 'audio/mpeg' \
+    icecast://${LIVE_USERNAME}:${LIVE_PASSWORD}@liquidsoap:8001/live \
+    -loglevel error 2>/dev/null"
+ok "authorized ffmpeg started in background"
+
+sleep 5
+
+HARBOR_STATUS=$(python3 - <<'PY'
+import socket, sys
+s = socket.create_connection(("127.0.0.1", 1234), timeout=5)
+s.sendall(b"live.status\n")
+buf = b""
+while True:
+    c = s.recv(1024)
+    if not c: break
+    buf += c
+    if b"END\r\n" in buf: break
+print(buf.decode().strip())
+PY
+)
+echo "$HARBOR_STATUS" | grep -qi "connected" \
+  || die "live harbor not showing connected after authorized stream. status: $HARBOR_STATUS"
+ok "liquidsoap live.status confirms source connected"
+
+# -- recording attribution --------------------------------------------------
+
+note "recording attribution"
+ATTRIB=$(curl -sS \
+  -H "authorization: Bearer dev_internal_secret_change_me" \
+  "http://localhost:4003/v1/radio/internal/recording-attribution?mount=live&started_at=${CONNECT_TS}")
+echo "$ATTRIB" | grep -q '"credential_id"' \
+  || die "recording-attribution did not return credential_id: $ATTRIB"
+echo "$ATTRIB" | grep -q '"label"' \
+  || die "recording-attribution did not return label: $ATTRIB"
+ok "GET /v1/radio/internal/recording-attribution returned attribution"
+
 note "all smoke checks passed"
