@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import chokidar from "chokidar";
-import { stat, readdir, unlink } from "node:fs/promises";
+import { stat, readdir, unlink, mkdir } from "node:fs/promises";
 import { join, basename } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -302,6 +302,12 @@ async function startupScan(): Promise<void> {
 // FS watcher
 // ---------------------------------------------------------------------------
 
+async function ensureWatchDirs(): Promise<void> {
+  for (const sub of ["live", "breaking"]) {
+    await mkdir(join(env.RECORDINGS_DIR, sub), { recursive: true }).catch(() => {});
+  }
+}
+
 function startWatcher(): void {
   const watchDirs = ["live", "breaking"].map((d) => join(env.RECORDINGS_DIR, d));
   const watcher = chokidar.watch(watchDirs, {
@@ -342,10 +348,14 @@ const app = new Hono();
 app.get("/health", async (c) => {
   let free_bytes: number | null = null;
   try {
-    const { stdout } = await execFileAsync("df", ["-B1", "--output=avail", env.RECORDINGS_DIR]);
+    // busybox df (Alpine) does not support --output; use POSIX -P instead.
+    // Column layout: Filesystem 1024-blocks Used Available Use% Mounted
+    const { stdout } = await execFileAsync("df", ["-P", "-k", env.RECORDINGS_DIR]);
     const lines = stdout.trim().split("\n");
-    const val = lines[1] ? parseInt(lines[1].trim(), 10) : NaN;
-    if (isFinite(val)) free_bytes = val;
+    const parts = lines[1]?.trim().split(/\s+/);
+    // Column index 3 is "Available" in KB (POSIX df -k).
+    const kbAvail = parts?.[3] ? parseInt(parts[3], 10) : NaN;
+    if (isFinite(kbAvail)) free_bytes = kbAvail * 1024;
   } catch {
     // df not available in all envs; not fatal
   }
@@ -360,6 +370,7 @@ console.log(`funk-recordings starting (recordings_dir=${env.RECORDINGS_DIR}, sta
 
 // Mint credential first (blocking with retries), then scan + watch.
 ensureDaemonCredential().then(async () => {
+  await ensureWatchDirs();
   await startupScan();
   // Drain anything the startup scan found immediately.
   await drainQueue();

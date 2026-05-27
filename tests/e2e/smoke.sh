@@ -208,6 +208,7 @@ REC_TS=$(date -u +%Y%m%d-%H%M%S)
 REC_FILENAME="live-${REC_TS}.mp3"
 
 docker exec funk-media-liquidsoap-1 sh -c "
+  mkdir -p /var/funk/recordings/live
   ffmpeg -nostats -loglevel error -y \
     -f lavfi -i 'sine=frequency=880:duration=5' \
     -ac 2 -ar 44100 -b:a 128k /tmp/smoke-rec.mp3
