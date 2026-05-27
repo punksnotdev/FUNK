@@ -241,7 +241,9 @@ sleep 5
 HARBOR_STATUS=$(python3 - <<'PY'
 import socket, sys
 s = socket.create_connection(("127.0.0.1", 1234), timeout=5)
-s.sendall(b"live.status\n")
+# liquidsoap 2.2 auto-assigns IDs: first input.harbor is "input.harbor",
+# second is "input.harbor.2" — live is the first defined in funk.liq.
+s.sendall(b"input.harbor.status\n")
 buf = b""
 while True:
     c = s.recv(1024)
@@ -253,7 +255,7 @@ PY
 )
 echo "$HARBOR_STATUS" | grep -qi "connected" \
   || die "live harbor not showing connected after authorized stream. status: $HARBOR_STATUS"
-ok "liquidsoap live.status confirms source connected"
+ok "liquidsoap input.harbor.status confirms source connected"
 
 # -- recording attribution --------------------------------------------------
 

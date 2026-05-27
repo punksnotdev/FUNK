@@ -83,10 +83,13 @@ interface HarborStatus {
 }
 
 export async function getHarborStatus(): Promise<HarborStatus> {
-  // input.harbor exposes "<name>.status" which returns "connected" or "no source client connected".
+  // In liquidsoap 2.2, input.harbor sources auto-assign IDs from the function
+  // name: the first input.harbor becomes "input.harbor" and subsequent ones
+  // become "input.harbor.2", "input.harbor.3", etc. The live source is the
+  // first harbor defined in funk.liq; breaking is the second.
   const [liveRes, breakingRes] = await Promise.all([
-    sendCommand("live.status").catch(() => ""),
-    sendCommand("breaking.status").catch(() => ""),
+    sendCommand("input.harbor.status").catch(() => ""),
+    sendCommand("input.harbor.2.status").catch(() => ""),
   ]);
   return {
     live_connected: /connected/i.test(liveRes) && !/no source/i.test(liveRes),
