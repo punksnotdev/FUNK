@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
 import { readdir, stat, writeFile, mkdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { env } from "./env";
@@ -27,22 +27,27 @@ async function resolveCredential(authHeader: string | undefined): Promise<Resolv
   return (await res.json()) as ResolvedCredential;
 }
 
-// In-memory live-transmission credentials.
+function requireInternalSecret(authHeader: string | undefined): boolean {
+  if (!authHeader?.startsWith("Bearer ")) return false;
+  return authHeader.slice("Bearer ".length) === env.RADIO_INTERNAL_SECRET;
+}
+
+// --- Credential store -------------------------------------------------------
 //
-// v0 limitation: liquidsoap's input.harbor uses the static HARBOR_*_PASSWORD
-// env var, so credentials minted here are *audit/management* entries — the
-// actual mount password they hand out is the shared one. To truly invalidate
-// a leaked password, rotate the env var and redeploy. Per-host credential
-// rotation (auth callback into funk-radio) is a follow-up.
+// Per-host live transmission credentials. Each call to
+// POST /v1/radio/live/credentials mints a unique username + password, hashed
+// at rest. Liquidsoap calls harbor-auth to validate on every connection.
+// Persistence is out of scope for v0.1 — an in-memory Map is fine.
 
 interface LiveCredentialRecord {
   id: string;
   label: string;
-  kind: "live" | "breaking";
-  harbor_username: string;
-  harbor_password: string;
+  mount: "live" | "breaking";
+  username: string;
+  password_hash: string;
   created_at: string;
   expires_at: string;
+  revoked_at: string | null;
 }
 
 const liveCredentials = new Map<string, LiveCredentialRecord>();
@@ -54,25 +59,100 @@ function pruneExpired(): void {
   }
 }
 
-function mintCredential(
-  kind: "live" | "breaking",
+// username = slugified label trimmed to 32 chars, guaranteed lowercase alphanum + hyphen
+function slugify(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 32) || "host";
+}
+
+// random 32-byte URL-safe base64 password (no padding, no + or /)
+function randomPassword(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+async function mintCredential(
+  mount: "live" | "breaking",
   label: string,
   ttlSeconds: number,
-): LiveCredentialRecord {
+): Promise<{ record: LiveCredentialRecord; plainPassword: string }> {
   pruneExpired();
   const now = new Date();
+  const plain = randomPassword();
+  const hash = await Bun.password.hash(plain, "bcrypt");
+  const id = randomUUID();
   const rec: LiveCredentialRecord = {
-    id: randomUUID(),
+    id,
     label,
-    kind,
-    harbor_username: kind,
-    harbor_password: kind === "live" ? env.HARBOR_LIVE_PASSWORD : env.HARBOR_BREAKING_PASSWORD,
+    mount,
+    username: `${slugify(label)}-${id.slice(0, 8)}`,
+    password_hash: hash,
     created_at: now.toISOString(),
     expires_at: new Date(now.getTime() + ttlSeconds * 1000).toISOString(),
+    revoked_at: null,
   };
-  liveCredentials.set(rec.id, rec);
-  return rec;
+  liveCredentials.set(id, rec);
+  return { record: rec, plainPassword: plain };
 }
+
+// --- Session store ----------------------------------------------------------
+//
+// Tracks active and recent harbor sessions for attribution lookups. Sessions
+// older than 7 days after disconnect are GC'd.
+//
+// Keyed by credential_id. activeSessions tracks which credential_id is
+// currently live on a given mount — used by the disconnect hook (liquidsoap
+// on_disconnect has no credential context, so radio resolves it internally).
+
+interface SessionRecord {
+  credential_id: string;
+  mount: string;
+  label: string;
+  connected_at: string;
+  disconnected_at: string | null;
+}
+
+const sessions = new Map<string, SessionRecord>();
+// mount → credential_id for the currently-connected source on that mount
+const activeSessions = new Map<string, string>();
+
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function pruneSessions(): void {
+  const cutoff = Date.now() - SESSION_TTL_MS;
+  for (const [id, s] of sessions) {
+    if (s.disconnected_at && new Date(s.disconnected_at).getTime() < cutoff) {
+      sessions.delete(id);
+    }
+  }
+}
+
+function recordSessionStart(credentialId: string, mount: string, label: string, connectedAt: string): void {
+  pruneSessions();
+  sessions.set(credentialId, {
+    credential_id: credentialId,
+    mount,
+    label,
+    connected_at: connectedAt,
+    disconnected_at: null,
+  });
+  activeSessions.set(mount, credentialId);
+}
+
+// Accepts credential_id directly (preferred) or resolves from the active mount.
+function recordSessionEnd(credentialIdOrNull: string | null, mount: string | null, disconnectedAt: string): boolean {
+  const credentialId = credentialIdOrNull ?? (mount ? activeSessions.get(mount) ?? null : null);
+  if (!credentialId) return false;
+  const s = sessions.get(credentialId);
+  if (!s) return false;
+  s.disconnected_at = disconnectedAt;
+  if (mount) activeSessions.delete(mount);
+  return true;
+}
+
+// --- Schedule ---------------------------------------------------------------
 
 interface ScheduleEntry {
   at?: string;
@@ -98,6 +178,8 @@ async function writePlaylist(entries: ScheduleEntry[]): Promise<void> {
   await writeFile(env.SCHEDULE_FILE, lines.join("\n") + "\n", "utf8");
 }
 
+// --- Recordings discovery ---------------------------------------------------
+
 interface RecordingEntry {
   id: string;
   source: "live" | "breaking";
@@ -106,6 +188,8 @@ interface RecordingEntry {
   duration_seconds: number | null;
   size_bytes: number;
   storage_url: string | null;
+  credential_id: string | null;
+  credential_label: string | null;
 }
 
 // Filename shape comes from funk.liq's output.file templates:
@@ -123,6 +207,24 @@ function parseRecordingFilename(
   const t = m[3];
   const iso = `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}T${t.slice(0, 2)}:${t.slice(2, 4)}:${t.slice(4, 6)}Z`;
   return { source, started_at: iso };
+}
+
+// Find the session whose window contains started_at within ±30s tolerance.
+function findAttribution(
+  mount: string,
+  startedAt: string,
+): { credential_id: string; label: string } | null {
+  const ts = new Date(startedAt).getTime();
+  const TOLERANCE_MS = 30 * 1000;
+  for (const s of sessions.values()) {
+    if (s.mount !== mount) continue;
+    const connectedMs = new Date(s.connected_at).getTime();
+    const disconnectedMs = s.disconnected_at ? new Date(s.disconnected_at).getTime() : Date.now();
+    if (ts >= connectedMs - TOLERANCE_MS && ts <= disconnectedMs + TOLERANCE_MS) {
+      return { credential_id: s.credential_id, label: s.label };
+    }
+  }
+  return null;
 }
 
 async function listRecordings(sinceIso: string | undefined): Promise<RecordingEntry[]> {
@@ -143,9 +245,7 @@ async function listRecordings(sinceIso: string | undefined): Promise<RecordingEn
       const st = await stat(filepath).catch(() => null);
       if (!st) continue;
       if (new Date(parsed.started_at).getTime() < since) continue;
-      // storage_url is null until the upload-to-FUNK-storage daemon lands.
-      // For now the consumer can fetch the file via the radio host if needed,
-      // or the operator can ship a syncing job.
+      const attribution = findAttribution(parsed.source, parsed.started_at);
       results.push({
         id: filename,
         source: parsed.source,
@@ -154,6 +254,8 @@ async function listRecordings(sinceIso: string | undefined): Promise<RecordingEn
         duration_seconds: null,
         size_bytes: st.size,
         storage_url: null,
+        credential_id: attribution?.credential_id ?? null,
+        credential_label: attribution?.label ?? null,
       });
     }
   }
@@ -161,12 +263,84 @@ async function listRecordings(sinceIso: string | undefined): Promise<RecordingEn
   return results;
 }
 
+// --- App --------------------------------------------------------------------
+
 const app = new Hono();
 app.use("*", cors({ origin: "*", credentials: false }));
 
 app.get("/health", (c) => {
   return c.json({ status: "ok", service: "radio", tenant: env.TENANT_ID });
 });
+
+// Internal endpoints — bearer-verified, not exposed publicly.
+// These are called by liquidsoap (on the media_private bridge) and the
+// recordings daemon. They bypass the FUNK auth service intentionally.
+
+app.post("/v1/radio/internal/harbor-auth", async (c) => {
+  if (!requireInternalSecret(c.req.header("authorization"))) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    mount?: string;
+    username?: string;
+    password?: string;
+    source_ip?: string;
+    connected_at?: string;
+  } | null;
+  if (!body?.mount || !body?.username || !body?.password || !body?.connected_at) {
+    return c.json({ valid: false }, 200);
+  }
+
+  pruneExpired();
+  const cred = [...liveCredentials.values()].find(
+    (r) => r.mount === body.mount && r.username === body.username,
+  );
+  if (!cred) return c.json({ valid: false }, 200);
+  if (cred.revoked_at) return c.json({ valid: false }, 200);
+  if (new Date(cred.expires_at).getTime() < Date.now()) return c.json({ valid: false }, 200);
+
+  const ok = await Bun.password.verify(body.password, cred.password_hash);
+  if (!ok) return c.json({ valid: false }, 200);
+
+  recordSessionStart(cred.id, cred.mount, cred.label, body.connected_at);
+  return c.json({ valid: true, credential_id: cred.id, label: cred.label }, 200);
+});
+
+app.post("/v1/radio/internal/harbor-disconnect", async (c) => {
+  if (!requireInternalSecret(c.req.header("authorization"))) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    mount?: string;
+    credential_id?: string;
+    disconnected_at?: string;
+  } | null;
+  if (!body?.disconnected_at || (!body?.credential_id && !body?.mount)) {
+    return c.json({ error: "disconnected_at and (credential_id or mount) required" }, 400);
+  }
+  recordSessionEnd(
+    body.credential_id ?? null,
+    body.mount ?? null,
+    body.disconnected_at,
+  );
+  return c.json({ ok: true }, 200);
+});
+
+app.get("/v1/radio/internal/recording-attribution", async (c) => {
+  if (!requireInternalSecret(c.req.header("authorization"))) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  const mount = c.req.query("mount");
+  const startedAt = c.req.query("started_at");
+  if (!mount || !startedAt) {
+    return c.json({ error: "mount and started_at required" }, 400);
+  }
+  const attribution = findAttribution(mount, startedAt);
+  if (!attribution) return c.json({ error: "not found" }, 404);
+  return c.json({ credential_id: attribution.credential_id, label: attribution.label }, 200);
+});
+
+// All other /v1/* routes require a valid FUNK service credential.
 
 app.use("/v1/*", async (c, next) => {
   const credential = await resolveCredential(c.req.header("authorization"));
@@ -226,15 +400,15 @@ app.post("/v1/radio/live/credentials", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
   const label = typeof body.label === "string" && body.label.length > 0 ? body.label : "unlabeled";
   const ttl = typeof body.ttl_seconds === "number" && body.ttl_seconds > 0 ? body.ttl_seconds : 6 * 3600;
-  const rec = mintCredential("live", label, ttl);
+  const { record: rec, plainPassword } = await mintCredential("live", label, ttl);
   return c.json({
-    id: rec.id,
+    credential_id: rec.id,
     label: rec.label,
-    harbor_username: rec.harbor_username,
-    harbor_password: rec.harbor_password,
+    mount: rec.mount,
     harbor_host: env.LIQUIDSOAP_HOST,
     harbor_port: 8001,
-    harbor_mount: "live",
+    username: rec.username,
+    password: plainPassword,
     expires_at: rec.expires_at,
   });
 });
@@ -245,16 +419,20 @@ app.get("/v1/radio/live/credentials", (c) => {
     credentials: [...liveCredentials.values()].map((r) => ({
       id: r.id,
       label: r.label,
-      kind: r.kind,
+      mount: r.mount,
+      username: r.username,
       created_at: r.created_at,
       expires_at: r.expires_at,
+      revoked_at: r.revoked_at,
     })),
   });
 });
 
 app.delete("/v1/radio/live/credentials/:id", (c) => {
-  const ok = liveCredentials.delete(c.req.param("id"));
-  return ok ? c.body(null, 204) : c.json({ error: "not found" }, 404);
+  const rec = liveCredentials.get(c.req.param("id"));
+  if (!rec) return c.json({ error: "not found" }, 404);
+  rec.revoked_at = new Date().toISOString();
+  return c.body(null, 204);
 });
 
 app.get("/v1/radio/live/status", async (c) => {
@@ -295,20 +473,20 @@ app.post("/v1/radio/interrupt/live", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
   const label = typeof body.label === "string" && body.label.length > 0 ? body.label : "breaking";
   const ttl = typeof body.ttl_seconds === "number" && body.ttl_seconds > 0 ? body.ttl_seconds : 30 * 60;
-  const rec = mintCredential("breaking", label, ttl);
+  const { record: rec, plainPassword } = await mintCredential("breaking", label, ttl);
   return c.json({
-    id: rec.id,
+    credential_id: rec.id,
     label: rec.label,
-    harbor_username: rec.harbor_username,
-    harbor_password: rec.harbor_password,
+    mount: rec.mount,
     harbor_host: env.LIQUIDSOAP_HOST,
     harbor_port: 8002,
-    harbor_mount: "breaking",
+    username: rec.username,
+    password: plainPassword,
     expires_at: rec.expires_at,
   });
 });
 
-// recordings (discovery only — upload-to-storage daemon is a follow-up)
+// recordings (discovery — storage_url populated by daemon after upload)
 
 app.get("/v1/radio/recordings", async (c) => {
   const since = c.req.query("since") ?? undefined;

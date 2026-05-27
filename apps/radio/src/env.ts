@@ -19,9 +19,7 @@ export const env = {
   SCHEDULE_FILE: process.env.SCHEDULE_FILE ?? "/etc/funk/schedule.m3u",
   RECORDINGS_DIR: process.env.RECORDINGS_DIR ?? "/var/funk/recordings",
 
-  // Static harbor passwords in v0. Per-host credential rotation is a
-  // follow-up; until then funk-radio's /v1/radio/live/credentials endpoints
-  // mint *bearer tokens* that consumers map onto the shared harbor mount.
-  HARBOR_LIVE_PASSWORD: required("HARBOR_LIVE_PASSWORD"),
-  HARBOR_BREAKING_PASSWORD: required("HARBOR_BREAKING_PASSWORD"),
+  // Shared secret for internal endpoints called by liquidsoap and the recordings
+  // daemon. Never exposed publicly — loopback / media_private plane only.
+  RADIO_INTERNAL_SECRET: required("RADIO_INTERNAL_SECRET"),
 } as const;

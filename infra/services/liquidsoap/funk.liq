@@ -8,7 +8,8 @@
 #   5. fallback  — white noise so listeners never hear absolute silence
 #
 # The funk-radio HTTPS service (apps/radio/) writes schedule.m3u and pokes
-# liquidsoap via telnet on port 1234.
+# liquidsoap via telnet on port 1234. It also owns the credential store that
+# validates every harbor connection via POST /v1/radio/internal/harbor-auth.
 
 settings.server.telnet := true
 settings.server.telnet.bind_addr := "0.0.0.0"
@@ -22,20 +23,73 @@ settings.log.level := 3
 # and tells liquidsoap to reload via telnet.
 main = playlist(id="main", reload_mode="watch", "/etc/funk/schedule.m3u")
 
+# Zero-padded integer helper for ISO8601 timestamp construction.
+def pad2(n) =
+  s = "#{n}"
+  if string.length(s) == 1 then "0#{s}" else s end
+end
+
+def now_iso8601() =
+  t = time.utc()
+  "#{t.year}-#{pad2(t.month)}-#{pad2(t.day)}T#{pad2(t.hour)}:#{pad2(t.min)}:#{pad2(t.sec)}Z"
+end
+
+# Auth callback shared by both harbor sources. Receives a creds record
+# {user, password, address} and POSTs to funk-radio, which validates the
+# credential against its in-memory store.
+def harbor_auth(~mount, creds) =
+  resp = http.post(
+    "http://radio:4003/v1/radio/internal/harbor-auth",
+    headers=[
+      ("Authorization", "Bearer #{environment.get('RADIO_INTERNAL_SECRET')}"),
+      ("Content-Type", "application/json")
+    ],
+    data=json.stringify({
+      mount=mount,
+      username=creds.user,
+      password=creds.password,
+      connected_at=now_iso8601()
+    })
+  )
+  if resp.status_code == 200 then
+    parsed = json.parse(default={valid=false}, resp)
+    parsed.valid
+  else
+    false
+  end
+end
+
+# Disconnect hook shared by both harbor sources. Radio resolves the active
+# credential_id internally by mount — on_disconnect has no credential context.
+def harbor_disconnect(~mount) =
+  ignore(http.post(
+    "http://radio:4003/v1/radio/internal/harbor-disconnect",
+    headers=[
+      ("Authorization", "Bearer #{environment.get('RADIO_INTERNAL_SECRET')}"),
+      ("Content-Type", "application/json")
+    ],
+    data=json.stringify({
+      mount=mount,
+      disconnected_at=now_iso8601()
+    })
+  ))
+end
+
 # Live host transmission. Hosts connect with a credential minted via
-# POST /v1/radio/live/credentials; the password is rotated by funk-radio
-# (see apps/radio/). For v0 a single shared harbor password is used.
+# POST /v1/radio/live/credentials; funk-radio validates each connection.
 live = input.harbor(
   "live",
   port=8001,
-  password=environment.get("HARBOR_LIVE_PASSWORD")
+  auth=fun(creds) -> harbor_auth(mount="live", creds),
+  on_disconnect=fun() -> harbor_disconnect(mount="live")
 )
 
 # Breaking-news live takeover (separate mount, distinct credential).
 breaking = input.harbor(
   "breaking",
   port=8002,
-  password=environment.get("HARBOR_BREAKING_PASSWORD")
+  auth=fun(creds) -> harbor_auth(mount="breaking", creds),
+  on_disconnect=fun() -> harbor_disconnect(mount="breaking")
 )
 
 # One-shot interrupt queue. funk-radio pushes URLs here:
