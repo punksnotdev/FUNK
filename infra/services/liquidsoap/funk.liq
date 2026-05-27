@@ -20,7 +20,7 @@ settings.log.level := 3
 
 # Pre-uploaded shows. funk-radio rewrites this file on PUT /v1/radio/schedule
 # and tells liquidsoap to reload via telnet.
-main = playlist(reload_mode="watch", "/etc/funk/schedule.m3u")
+main = playlist(id="main", reload_mode="watch", "/etc/funk/schedule.m3u")
 
 # Live host transmission. Hosts connect with a credential minted via
 # POST /v1/radio/live/credentials; the password is rotated by funk-radio

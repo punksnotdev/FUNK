@@ -6,6 +6,18 @@ All compose commands assume you're at the repo root: `/home/furenku/punksnotdev/
 
 ## Bring it up
 
+### 0. One-time setup — shared dev network
+
+The dev overrides attach `auth` and `radio` to a shared external bridge so the
+media plane's radio service can resolve auth by DNS name. Create it once:
+
+```bash
+docker network create funk_dev
+```
+
+(Prod does not use this — the planes live on separate hosts and the radio
+service reaches auth via a public HTTPS URL.)
+
 ### 1. Control plane — postgres, minio, auth, storage
 
 ```bash
@@ -94,7 +106,7 @@ Add `-v` to either command to wipe volumes (postgres data, MinIO objects, applie
 ## Gotchas
 
 - **MinIO presigned download URLs** point at whatever `S3_PUBLIC_ENDPOINT` resolves to. Keep it set to a host the browser can reach (default `http://localhost:9000` in dev).
-- **Radio reaches auth via the host gateway**: in dev, `AUTH_URL=http://host.docker.internal:4001` works because the override declares `extra_hosts: host.docker.internal:host-gateway`. On Linux Docker this resolves to the host's gateway IP.
+- **Radio reaches auth via the shared `funk_dev` bridge** (see "One-time setup" above). The host-gateway approach used previously broke on hosts whose firewall blocks bridge-to-host traffic; the shared external network is more portable.
 - **Liquidsoap harbor passwords** in `media.dev.env` must match what hosts use when connecting their broadcasting tools. Defaults are `devlive_change_me` and `devbreaking_change_me`.
 - **HLS CORS headers** live in `infra/services/media-nginx/nginx.conf`. Each regex location declares its own `add_header` block — nginx does not inherit. Editing the file requires `docker restart funk-media-nginx-1`; `nginx -s reload` does not pick up the change reliably.
 - **`demo/svelte-poc/`** is a legacy POC of the old invitation-token auth flow and will not work against the credential-issuer auth in this repo. Consumer-side code is intended to live in a separate repo per [ADR-003](adr/ADR-003-funk-consumer-boundary.md); the demo dir is kept only as a historical artifact for now.

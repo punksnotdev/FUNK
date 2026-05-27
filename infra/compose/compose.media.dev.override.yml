@@ -1,5 +1,13 @@
 name: funk-media
 
+# Dev-only: a shared external bridge so the radio service can reach the
+# control plane's auth service by DNS name (alias: `auth`). Create once:
+# `docker network create funk_dev`. Prod runs the planes on separate hosts
+# and the radio service reaches auth via a public HTTPS URL instead.
+networks:
+  funk_dev:
+    external: true
+
 services:
   icecast:
     ports:
@@ -14,10 +22,9 @@ services:
   radio:
     ports:
       - "${RADIO_HOST_PORT:-4003}:${RADIO_PORT:-4003}"
-    # In dev, both planes typically run on the same Docker host. The radio
-    # service reaches auth on the control plane via the host gateway.
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    networks:
+      media_private:
+      funk_dev: {}
 
   nginx:
     ports:

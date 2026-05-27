@@ -1,5 +1,12 @@
 name: funk-control
 
+# Dev-only: a shared external bridge so the media plane's radio service can
+# reach auth by DNS name. Create once: `docker network create funk_dev`.
+# Prod runs the planes on separate hosts and uses real HTTPS URLs instead.
+networks:
+  funk_dev:
+    external: true
+
 services:
   postgres:
     ports:
@@ -13,6 +20,10 @@ services:
   auth:
     ports:
       - "${AUTH_HOST_PORT:-4001}:${AUTH_PORT:-4001}"
+    networks:
+      control_private:
+      funk_dev:
+        aliases: [auth]
 
   storage:
     ports:

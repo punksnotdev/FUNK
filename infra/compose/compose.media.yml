@@ -92,7 +92,7 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: ${RADIO_PORT:-4003}
       TENANT_ID: ${TENANT_ID:-default}
-      AUTH_URL: ${AUTH_URL:?AUTH_URL is required (control-plane auth; e.g. http://host.docker.internal:4001 in dev, https://auth.funk.example in prod)}
+      AUTH_URL: ${AUTH_URL:?AUTH_URL is required (control-plane auth; e.g. http://auth:4001 on the shared funk_dev network in dev, https://auth.funk.example in prod)}
       LIQUIDSOAP_HOST: liquidsoap
       LIQUIDSOAP_TELNET_PORT: 1234
       SCHEDULE_FILE: /etc/funk/schedule.m3u
