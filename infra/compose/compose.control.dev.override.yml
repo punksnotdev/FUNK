@@ -28,7 +28,3 @@ services:
   storage:
     ports:
       - "${STORAGE_HOST_PORT:-4002}:${STORAGE_PORT:-4002}"
-    networks:
-      control_private:
-      funk_dev:
-        aliases: [storage]

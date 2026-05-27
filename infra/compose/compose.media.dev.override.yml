@@ -33,6 +33,5 @@ services:
   recordings:
     ports:
       - "${RECORDINGS_HOST_PORT:-4004}:${RECORDINGS_PORT:-4004}"
-    networks:
-      media_private:
-      funk_dev: {}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

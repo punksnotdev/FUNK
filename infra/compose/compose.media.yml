@@ -157,6 +157,10 @@ services:
 
   # Recording upload daemon. Watches /var/funk/recordings for completed MP3s,
   # queries radio for session attribution, and uploads to FUNK storage.
+  #
+  # Reaches radio by service name on media_private. Reaches auth and storage
+  # via RECORDINGS_AUTH_URL and STORAGE_URL (host.docker.internal in dev;
+  # public HTTPS URLs in prod).
   recordings:
     build:
       context: ../..
@@ -167,12 +171,12 @@ services:
       liquidsoap:
         condition: service_started
       radio:
-        condition: service_healthy
+        condition: service_started
     environment:
       TZ: UTC
       NODE_ENV: ${NODE_ENV:-production}
       PORT: ${RECORDINGS_PORT:-4004}
-      AUTH_URL: ${AUTH_URL:?AUTH_URL is required}
+      AUTH_URL: ${RECORDINGS_AUTH_URL:?RECORDINGS_AUTH_URL is required (auth URL for recordings daemon)}
       STORAGE_URL: ${STORAGE_URL:?STORAGE_URL is required}
       RADIO_URL: http://radio:${RADIO_PORT:-4003}
       RADIO_INTERNAL_SECRET: ${RADIO_INTERNAL_SECRET:?RADIO_INTERNAL_SECRET is required}
