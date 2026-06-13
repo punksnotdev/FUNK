@@ -18,6 +18,21 @@ services:
       timeout: 5s
       retries: 10
 
+  # One-shot: make the recordings volume writable by liquidsoap (uid 10000).
+  # Docker initializes named volumes as root:root 0755, so liquidsoap's
+  # output.file would otherwise die with "Permission denied" and no live
+  # session would ever be recorded. The recordings daemon runs as root and is
+  # unaffected. Runs to completion before liquidsoap/recordings start.
+  recordings-init:
+    image: alpine:3.20
+    command:
+      - "sh"
+      - "-c"
+      - "mkdir -p /var/funk/recordings/live /var/funk/recordings/breaking && chown -R 10000:10000 /var/funk/recordings && chmod -R 0775 /var/funk/recordings"
+    volumes:
+      - funk_recordings:/var/funk/recordings
+    restart: "no"
+
   # Audio engine. Streams the priority chain (breaking > interrupt > live > main
   # > white-noise fallback) into icecast `funk.mp3`. Controlled by funk-radio
   # via telnet on port 1234. See infra/services/liquidsoap/funk.liq.
@@ -27,6 +42,8 @@ services:
     depends_on:
       icecast:
         condition: service_healthy
+      recordings-init:
+        condition: service_completed_successfully
     environment:
       ICECAST_HOST: icecast
       ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD}
@@ -166,6 +183,8 @@ services:
     image: funk/recordings:dev
     restart: unless-stopped
     depends_on:
+      recordings-init:
+        condition: service_completed_successfully
       liquidsoap:
         condition: service_started
       radio:
