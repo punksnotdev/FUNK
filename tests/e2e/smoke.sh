@@ -62,6 +62,18 @@ ok "env files refreshed from .example"
 ADMIN_TOKEN=$(grep -E '^ADMIN_BOOTSTRAP_TOKEN=' infra/env/control.dev.env | cut -d= -f2)
 [ -n "$ADMIN_TOKEN" ] || die "ADMIN_BOOTSTRAP_TOKEN missing from control.dev.env"
 
+# Host-published ports the smoke test (running on the host) connects through.
+# Internal container ports are unchanged; these are the dev host mappings read
+# from infra/env/*.dev.env — the reserved 74xx band (see docs/LOCAL_DEV.md).
+_hostport() { grep -E "^$2=" "$1" 2>/dev/null | cut -d= -f2; }
+H_AUTH=$(_hostport    infra/env/control.dev.env AUTH_HOST_PORT);              H_AUTH=${H_AUTH:-7401}
+H_STORAGE=$(_hostport infra/env/control.dev.env STORAGE_HOST_PORT);           H_STORAGE=${H_STORAGE:-7402}
+H_RADIO=$(_hostport   infra/env/media.dev.env   RADIO_HOST_PORT);             H_RADIO=${H_RADIO:-7403}
+H_REC=$(_hostport     infra/env/media.dev.env   RECORDINGS_HOST_PORT);        H_REC=${H_REC:-7404}
+H_ICECAST=$(_hostport infra/env/media.dev.env   ICECAST_HOST_PORT);           H_ICECAST=${H_ICECAST:-7480}
+H_HLS=$(_hostport     infra/env/media.dev.env   HLS_ORIGIN_HOST_PORT);        H_HLS=${H_HLS:-7488}
+H_TELNET=$(_hostport  infra/env/media.dev.env   LIQUIDSOAP_TELNET_HOST_PORT); H_TELNET=${H_TELNET:-7423}
+
 # -- bring up control plane (clean volumes for deterministic schema init) --
 
 note "control plane up (clean volumes)"
@@ -90,18 +102,18 @@ ok "media containers started"
 # -- HTTP health (poll until 200 or timeout) -------------------------------
 
 note "HTTP health"
-wait_for_http http://localhost:4001/health           60 "auth"
-wait_for_http http://localhost:4002/health           60 "storage"
-wait_for_http http://localhost:4003/health           60 "radio"
-wait_for_http http://localhost:4004/health           90 "recordings daemon"
-wait_for_http http://localhost:8000/status-json.xsl  60 "icecast"
+wait_for_http http://localhost:${H_AUTH}/health           60 "auth"
+wait_for_http http://localhost:${H_STORAGE}/health           60 "storage"
+wait_for_http http://localhost:${H_RADIO}/health           60 "radio"
+wait_for_http http://localhost:${H_REC}/health           90 "recordings daemon"
+wait_for_http http://localhost:${H_ICECAST}/status-json.xsl  60 "icecast"
 # HLS master takes a moment after liquidsoap starts pushing audio.
-wait_for_http http://localhost:8080/hls/master.m3u8  90 "hls origin"
+wait_for_http http://localhost:${H_HLS}/hls/master.m3u8  90 "hls origin"
 
 # -- auth flow -------------------------------------------------------------
 
 note "auth flow"
-MINT=$(curl -sS -X POST http://localhost:4001/v1/credentials \
+MINT=$(curl -sS -X POST http://localhost:${H_AUTH}/v1/credentials \
   -H "authorization: Bearer $ADMIN_TOKEN" \
   -H "content-type: application/json" \
   -d '{"label":"e2e-smoke"}')
@@ -109,7 +121,7 @@ TOKEN=$(echo "$MINT" | python3 -c 'import sys,json;print(json.load(sys.stdin)["t
 [ -n "$TOKEN" ] || die "no token in mint response: $MINT"
 ok "credential minted"
 
-ME=$(curl -sS -H "authorization: Bearer $TOKEN" http://localhost:4001/v1/credentials/me)
+ME=$(curl -sS -H "authorization: Bearer $TOKEN" http://localhost:${H_AUTH}/v1/credentials/me)
 echo "$ME" | grep -q '"label":"e2e-smoke"' \
   || die "/v1/credentials/me did not echo credential: $ME"
 ok "/v1/credentials/me echoes credential"
@@ -117,7 +129,7 @@ ok "/v1/credentials/me echoes credential"
 # Cross-plane: radio (media) must validate the same token via auth (control).
 radio_401=$(curl -s -o /dev/null -w '%{http_code}' \
   -H "authorization: Bearer bogus_token_for_negative_check" \
-  http://localhost:4003/v1/radio/schedule)
+  http://localhost:${H_RADIO}/v1/radio/schedule)
 [ "$radio_401" = "401" ] || die "radio accepted bogus token (got $radio_401)"
 ok "radio rejects bogus token (401)"
 
@@ -137,7 +149,7 @@ ok "60s sine generated at /tmp/test.mp3"
 # -- apply schedule --------------------------------------------------------
 
 note "apply schedule"
-APPLIED=$(curl -sS -X PUT http://localhost:4003/v1/radio/schedule \
+APPLIED=$(curl -sS -X PUT http://localhost:${H_RADIO}/v1/radio/schedule \
   -H "authorization: Bearer $TOKEN" \
   -H "content-type: application/json" \
   -d '{"entries":[{"audio_url":"file:///tmp/test.mp3","title":"smoke","starts_at":"2026-05-26T18:50:00Z","ends_at":"2026-05-26T19:00:00Z"}]}')
@@ -145,7 +157,7 @@ echo "$APPLIED" | grep -q '"applied":true' || die "schedule not applied: $APPLIE
 ok "PUT /v1/radio/schedule returned applied=true"
 
 # Read it back.
-SCHED=$(curl -sS -H "authorization: Bearer $TOKEN" http://localhost:4003/v1/radio/schedule)
+SCHED=$(curl -sS -H "authorization: Bearer $TOKEN" http://localhost:${H_RADIO}/v1/radio/schedule)
 echo "$SCHED" | grep -q '"audio_url":"file:///tmp/test.mp3"' \
   || die "GET schedule did not echo the URL we just PUT: $SCHED"
 ok "GET schedule echoes applied entries"
@@ -154,9 +166,9 @@ ok "GET schedule echoes applied entries"
 
 note "liquidsoap state via telnet"
 sleep 5
-ON_AIR=$(python3 - <<'PY'
-import socket
-s = socket.create_connection(("127.0.0.1", 1234), timeout=5)
+ON_AIR=$(TELNET_PORT="$H_TELNET" python3 - <<'PY'
+import socket, os
+s = socket.create_connection(("127.0.0.1", int(os.environ["TELNET_PORT"])), timeout=5)
 s.sendall(b"request.on_air\n")
 buf = b""
 while True:
@@ -178,16 +190,16 @@ fi
 
 note "HLS pipeline"
 sleep 2
-SEG1=$(curl -s http://localhost:8080/hls/128k.m3u8 | grep -c '\.ts$' || true)
+SEG1=$(curl -s http://localhost:${H_HLS}/hls/128k.m3u8 | grep -c '\.ts$' || true)
 sleep 7
-SEG2=$(curl -s http://localhost:8080/hls/128k.m3u8 | grep -c '\.ts$' || true)
+SEG2=$(curl -s http://localhost:${H_HLS}/hls/128k.m3u8 | grep -c '\.ts$' || true)
 [ "$SEG1" -gt 0 ] || die "no HLS segments after applying schedule"
 ok "HLS sliding window present (saw $SEG1 → $SEG2 segments across 7s)"
 
 # Fetch a segment and verify it's MPEG-TS shaped.
-SEG=$(curl -s http://localhost:8080/hls/128k.m3u8 | awk '/\.ts$/{print; exit}')
+SEG=$(curl -s http://localhost:${H_HLS}/hls/128k.m3u8 | awk '/\.ts$/{print; exit}')
 [ -n "$SEG" ] || die "no .ts entry in 128k.m3u8"
-curl -fsS "http://localhost:8080/hls/$SEG" -o /tmp/funk_e2e_seg.ts
+curl -fsS "http://localhost:${H_HLS}/hls/$SEG" -o /tmp/funk_e2e_seg.ts
 # MPEG-TS sync byte is 0x47 at offset 0, repeating every 188 bytes.
 FIRST=$(od -An -tx1 -N1 /tmp/funk_e2e_seg.ts | tr -d ' \n')
 [ "$FIRST" = "47" ] || die "segment $SEG missing MPEG-TS sync byte (got $FIRST)"
@@ -196,7 +208,9 @@ ok "fetched segment $SEG starts with valid MPEG-TS sync byte"
 # -- icecast source state --------------------------------------------------
 
 note "icecast funk.mp3 mount"
-SOURCE_INFO=$(curl -s http://localhost:8000/status-json.xsl)
+SOURCE_INFO=$(curl -s http://localhost:${H_ICECAST}/status-json.xsl)
+# listenurl below is icecast's OWN reported value (its internal :8000 + configured
+# hostname), independent of the host port mapping — intentionally left literal.
 echo "$SOURCE_INFO" | grep -q '"listenurl":"http://localhost:8000/funk.mp3"' \
   || die "icecast funk.mp3 mount not active. response: $SOURCE_INFO"
 ok "icecast reports funk.mp3 mount with active source"
@@ -205,7 +219,7 @@ ok "icecast reports funk.mp3 mount with active source"
 
 note "harbor credentials"
 
-CRED=$(curl -sS -X POST http://localhost:4003/v1/radio/live/credentials \
+CRED=$(curl -sS -X POST http://localhost:${H_RADIO}/v1/radio/live/credentials \
   -H "authorization: Bearer $TOKEN" \
   -H "content-type: application/json" \
   -d '{"label":"smoke test host","ttl_seconds":300}')
@@ -250,7 +264,7 @@ HARBOR_CONNECTED=false
 for _i in $(seq 1 20); do
   STATUS=$(python3 -c "
 import socket
-s = socket.create_connection(('127.0.0.1', 1234), timeout=3)
+s = socket.create_connection(('127.0.0.1', ${H_TELNET}), timeout=3)
 # liquidsoap 2.2 auto-assigns IDs: first input.harbor is 'input.harbor',
 # second is 'input.harbor.2' — live is the first defined in funk.liq.
 s.sendall(b'input.harbor.status\n')
@@ -278,7 +292,7 @@ RADIO_INTERNAL_SECRET=$(grep -E '^RADIO_INTERNAL_SECRET=' infra/env/media.dev.en
 ATTRIB_TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 ATTRIB=$(curl -sS \
   -H "authorization: Bearer ${RADIO_INTERNAL_SECRET}" \
-  "http://localhost:4003/v1/radio/internal/recording-attribution?mount=live&started_at=${ATTRIB_TS}")
+  "http://localhost:${H_RADIO}/v1/radio/internal/recording-attribution?mount=live&started_at=${ATTRIB_TS}")
 echo "$ATTRIB" | grep -q '"credential_id"' \
   || die "recording-attribution did not return credential_id: $ATTRIB"
 echo "$ATTRIB" | grep -q '"label"' \
@@ -317,7 +331,7 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   # storage_url population from radio is deferred (Track A radio-side integration),
   # so instead poll the storage service's file listing directly via the admin token.
   STORAGE_LIST=$(curl -sS -H "authorization: Bearer $ADMIN_TOKEN" \
-    "http://localhost:4002/files/recordings/live/${REC_FILENAME%-*}" 2>/dev/null || true)
+    "http://localhost:${H_STORAGE}/files/recordings/live/${REC_FILENAME%-*}" 2>/dev/null || true)
   # More reliably: check if the local file has been deleted (daemon deletes after upload).
   if ! docker exec funk-media-liquidsoap-1 test -f "/var/funk/recordings/live/${REC_FILENAME}" 2>/dev/null; then
     ok "local file deleted — daemon confirmed upload"
@@ -330,7 +344,7 @@ done
 [ "$UPLOADED" = "1" ] || die "daemon did not upload ${REC_FILENAME} within ${WAIT_TOTAL}s (file still present in volume)"
 
 # Verify the daemon health endpoint reports 0 pending after successful upload.
-HEALTH=$(curl -sS http://localhost:4004/health)
+HEALTH=$(curl -sS http://localhost:${H_REC}/health)
 echo "$HEALTH" | grep -q '"status":"ok"' || die "recordings daemon health not ok: $HEALTH"
 ok "recordings daemon /health returns status=ok"
 
@@ -339,7 +353,7 @@ ok "recordings daemon /health returns status=ok"
 note "radio recordings index populated by daemon notification"
 RECS=""
 for _i in $(seq 1 10); do
-  RECS=$(curl -sS -H "authorization: Bearer $TOKEN" http://localhost:4003/v1/radio/recordings)
+  RECS=$(curl -sS -H "authorization: Bearer $TOKEN" http://localhost:${H_RADIO}/v1/radio/recordings)
   if echo "$RECS" | grep -q '"storage_url"'; then break; fi
   sleep 1
 done

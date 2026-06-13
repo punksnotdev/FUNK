@@ -10,16 +10,16 @@ networks:
 services:
   postgres:
     ports:
-      - "${POSTGRES_HOST_PORT:-5432}:5432"
+      - "${POSTGRES_HOST_PORT:-7432}:5432"
 
   minio:
     ports:
-      - "${MINIO_HOST_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_HOST_PORT:-9001}:9001"
+      - "${MINIO_HOST_PORT:-7490}:9000"
+      - "${MINIO_CONSOLE_HOST_PORT:-7491}:9001"
 
   auth:
     ports:
-      - "${AUTH_HOST_PORT:-4001}:${AUTH_PORT:-4001}"
+      - "${AUTH_HOST_PORT:-7401}:${AUTH_PORT:-4001}"
     networks:
       control_private:
       funk_dev:
@@ -27,7 +27,7 @@ services:
 
   storage:
     ports:
-      - "${STORAGE_HOST_PORT:-4002}:${STORAGE_PORT:-4002}"
+      - "${STORAGE_HOST_PORT:-7402}:${STORAGE_PORT:-4002}"
     networks:
       control_private:
       funk_dev:

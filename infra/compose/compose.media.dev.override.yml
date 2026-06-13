@@ -11,28 +11,28 @@ networks:
 services:
   icecast:
     ports:
-      - "${ICECAST_HOST_PORT:-8000}:8000"
+      - "${ICECAST_HOST_PORT:-7480}:8000"
 
   liquidsoap:
     ports:
-      - "${LIQUIDSOAP_TELNET_HOST_PORT:-1234}:1234"
-      - "${HARBOR_LIVE_HOST_PORT:-8001}:8001"
-      - "${HARBOR_BREAKING_HOST_PORT:-8002}:8002"
+      - "${LIQUIDSOAP_TELNET_HOST_PORT:-7423}:1234"
+      - "${HARBOR_LIVE_HOST_PORT:-7481}:8001"
+      - "${HARBOR_BREAKING_HOST_PORT:-7482}:8002"
 
   radio:
     ports:
-      - "${RADIO_HOST_PORT:-4003}:${RADIO_PORT:-4003}"
+      - "${RADIO_HOST_PORT:-7403}:${RADIO_PORT:-4003}"
     networks:
       media_private:
       funk_dev: {}
 
   nginx:
     ports:
-      - "${HLS_ORIGIN_HOST_PORT:-8080}:8080"
+      - "${HLS_ORIGIN_HOST_PORT:-7488}:8080"
 
   recordings:
     ports:
-      - "${RECORDINGS_HOST_PORT:-4004}:${RECORDINGS_PORT:-4004}"
+      - "${RECORDINGS_HOST_PORT:-7404}:${RECORDINGS_PORT:-4004}"
     networks:
       media_private:
       funk_dev: {}
