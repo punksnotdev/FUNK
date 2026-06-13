@@ -253,7 +253,7 @@ ok "bogus-creds connection rejected (ffmpeg exit $BOGUS_EXIT)"
 
 note "authorized harbor connection"
 docker exec -d funk-media-liquidsoap-1 sh -c \
-  "ffmpeg -re -f lavfi -i 'sine=frequency=440:duration=15' -c:a libmp3lame -b:a 128k \
+  "ffmpeg -re -f lavfi -i 'sine=frequency=440:duration=25' -c:a libmp3lame -b:a 128k \
     -f mp3 \
     icecast://${LIVE_USERNAME}:${LIVE_PASSWORD}@liquidsoap:8001/live \
     -loglevel error 2>/dev/null"
@@ -299,40 +299,38 @@ echo "$ATTRIB" | grep -q '"label"' \
   || die "recording-attribution did not return label: $ATTRIB"
 ok "GET /v1/radio/internal/recording-attribution returned attribution"
 
-# -- Track B: recordings upload daemon ---------------------------------------
-# Exercises the full path: write an mp3 directly into the recordings volume
-# (bypassing the harbor path), wait for the daemon to detect stability and
-# upload, then assert the local file is deleted (proxy for successful upload).
+# -- Track B: real recording write path --------------------------------------
+# The authorized broadcast above keeps the `live` source connected, so
+# liquidsoap's output.file writes /var/funk/recordings/live/live-<ts>.mp3 for
+# the duration of the session. We assert that the REAL path produced the file
+# — this is what catches the funk_recordings volume being root-owned (which
+# made output.file fail with "Permission denied" and silently record nothing).
+# We do NOT inject the file ourselves.
 
-note "recordings daemon — write file, wait for upload"
+note "recording — liquidsoap writes the live session (real output.file path)"
 
 STABILITY_SECS=$(grep -E '^STABILITY_SECONDS=' infra/env/media.dev.env | cut -d= -f2)
 STABILITY_SECS="${STABILITY_SECS:-30}"
 
-REC_TS=$(date -u +%Y%m%d-%H%M%S)
-REC_FILENAME="live-${REC_TS}.mp3"
+# Discover the file liquidsoap is writing while the live source is connected.
+REC_FILENAME=""
+for _i in $(seq 1 20); do
+  REC_FILENAME=$(docker exec funk-media-liquidsoap-1 sh -c \
+    'ls -1 /var/funk/recordings/live/live-*.mp3 2>/dev/null | head -1 | xargs -r basename' 2>/dev/null || true)
+  [ -n "$REC_FILENAME" ] && break
+  sleep 1
+done
+[ -n "$REC_FILENAME" ] \
+  || die "liquidsoap wrote no recording — output.file path broken (check funk_recordings perms / recordings-init)"
+ok "liquidsoap wrote ${REC_FILENAME} via output.file (real recording path works)"
 
-docker exec funk-media-liquidsoap-1 sh -c "
-  mkdir -p /var/funk/recordings/live
-  ffmpeg -nostats -loglevel error -y \
-    -f lavfi -i 'sine=frequency=880:duration=5' \
-    -ac 2 -ar 44100 -b:a 128k /tmp/smoke-rec.mp3
-  cp /tmp/smoke-rec.mp3 /var/funk/recordings/live/${REC_FILENAME}
-"
-ok "wrote ${REC_FILENAME} into recordings volume"
-
-# Wait STABILITY_SECONDS + 30s for daemon to pick it up and upload.
-WAIT_TOTAL=$(( STABILITY_SECS + 30 ))
-note "waiting up to ${WAIT_TOTAL}s for daemon to upload ${REC_FILENAME}"
+# Wait for the session to end (file goes stable) and the daemon to upload it.
+# The daemon deletes the local file on confirmed upload.
+WAIT_TOTAL=$(( STABILITY_SECS + 60 ))
+note "waiting up to ${WAIT_TOTAL}s for session to end + daemon to upload ${REC_FILENAME}"
 deadline=$(( $(date +%s) + WAIT_TOTAL ))
 UPLOADED=0
 while [ "$(date +%s)" -lt "$deadline" ]; do
-  # Check GET /v1/radio/recordings for an entry with non-null storage_url.
-  # storage_url population from radio is deferred (Track A radio-side integration),
-  # so instead poll the storage service's file listing directly via the admin token.
-  STORAGE_LIST=$(curl -sS -H "authorization: Bearer $ADMIN_TOKEN" \
-    "http://localhost:${H_STORAGE}/files/recordings/live/${REC_FILENAME%-*}" 2>/dev/null || true)
-  # More reliably: check if the local file has been deleted (daemon deletes after upload).
   if ! docker exec funk-media-liquidsoap-1 test -f "/var/funk/recordings/live/${REC_FILENAME}" 2>/dev/null; then
     ok "local file deleted — daemon confirmed upload"
     UPLOADED=1
