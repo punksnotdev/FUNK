@@ -34,6 +34,16 @@ def now_iso8601() =
   "#{t.year}-#{pad2(t.month)}-#{pad2(t.day)}T#{pad2(t.hour)}:#{pad2(t.min)}:#{pad2(t.sec)}Z"
 end
 
+# Recording filename timestamp: YYYYMMDD-HHMMSS (UTC). liquidsoap 2.2 does NOT
+# strftime-expand output.file paths, so we build the stamp ourselves and pass
+# the filename as a getter ({...}) below — evaluated each time the file opens,
+# so every session gets its own connect-time name (e.g. live-20260613-110550.mp3).
+# The recordings daemon parses started_at out of this exact shape.
+def rec_stamp() =
+  t = time.utc()
+  "#{t.year}#{pad2(t.month)}#{pad2(t.day)}-#{pad2(t.hour)}#{pad2(t.min)}#{pad2(t.sec)}"
+end
+
 # Auth callback shared by both harbor sources. Receives a creds record
 # {user, password, address} and POSTs to funk-radio, which validates the
 # credential against its in-memory store.
@@ -110,7 +120,7 @@ out = fallback(
 # source connects/disconnects (open on connect, close on drop).
 output.file(
   %mp3(bitrate=128),
-  "/var/funk/recordings/live/live-%Y%m%d-%H%M%S.mp3",
+  { "/var/funk/recordings/live/live-#{rec_stamp()}.mp3" },
   fallible=true,
   reopen_when={ false },
   live
@@ -118,7 +128,7 @@ output.file(
 
 output.file(
   %mp3(bitrate=128),
-  "/var/funk/recordings/breaking/breaking-%Y%m%d-%H%M%S.mp3",
+  { "/var/funk/recordings/breaking/breaking-#{rec_stamp()}.mp3" },
   fallible=true,
   reopen_when={ false },
   breaking
