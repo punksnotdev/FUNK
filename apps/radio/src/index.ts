@@ -168,12 +168,27 @@ interface ScheduleWindow {
 
 let appliedSchedule: ScheduleWindow | null = null;
 
+// Escape a value for use inside a liquidsoap annotate: key="value" pair.
+// Backslash first (so we don't double-escape the quotes we add), then quote.
+// Without this an odd/hostile title could break the playlist line or inject
+// extra annotations (e.g. a title containing `",funk_source="live`).
+function escapeAnnotation(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 async function writePlaylist(entries: ScheduleEntry[]): Promise<void> {
   await mkdir(dirname(env.SCHEDULE_FILE), { recursive: true });
   const lines = ["#EXTM3U"];
   for (const e of entries) {
     if (e.title) lines.push(`#EXTINF:${e.duration_seconds ?? -1},${e.title}`);
-    lines.push(e.audio_url);
+    // Attach per-track metadata via liquidsoap's annotate: protocol so the
+    // scheduled title surfaces in now-playing. The m3u #EXTINF title alone is
+    // NOT propagated into the playing source's runtime metadata; annotations
+    // are. funk_source marks these as schedule-driven so now-playing can report
+    // a meaningful source instead of "unknown".
+    const annotations = [`funk_source="schedule"`];
+    if (e.title) annotations.push(`title="${escapeAnnotation(e.title)}"`);
+    lines.push(`annotate:${annotations.join(",")}:${e.audio_url}`);
   }
   await writeFile(env.SCHEDULE_FILE, lines.join("\n") + "\n", "utf8");
 }

@@ -186,6 +186,20 @@ else
   die "no on-air request — switch did not flip off noise. output: $ON_AIR"
 fi
 
+# -- now-playing reflects the scheduled track ------------------------------
+# The schedule above applied title "smoke"; now-playing must surface it (and a
+# non-"unknown" source) rather than the empty {source:"unknown",metadata:{}}
+# the endpoint used to return.
+note "now-playing reflects scheduled title"
+NOW=$(curl -sS -H "authorization: Bearer $TOKEN" \
+  http://localhost:${H_RADIO}/v1/radio/now-playing)
+echo "$NOW" | grep -q '"title":"smoke"' \
+  || die "now-playing did not surface scheduled title: $NOW"
+if echo "$NOW" | grep -q '"source":"unknown"'; then
+  die "now-playing still reports source=unknown while scheduled track plays: $NOW"
+fi
+ok "now-playing surfaces scheduled title (source=$(echo "$NOW" | python3 -c 'import sys,json;print(json.load(sys.stdin)["source"])'))"
+
 # -- HLS pipeline ----------------------------------------------------------
 
 note "HLS pipeline"
