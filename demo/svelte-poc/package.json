@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev --port 7470",
+    "dev": "vite dev --port 7270",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview --port 7270",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
   },
   "devDependencies": {
     "@sveltejs/adapter-node": "^5.2.11",

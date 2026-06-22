@@ -4,8 +4,8 @@
 
 <main>
   <header>
-    <h1>FUNK <span class="version">demo-0</span></h1>
-    <p class="tagline">open-source infra for movement platforms</p>
+    <h1>FUNK <span class="version">listen demo</span></h1>
+    <p class="tagline">contract reference — anonymous HLS + server-proxied now-playing</p>
   </header>
   {@render children()}
 </main>
