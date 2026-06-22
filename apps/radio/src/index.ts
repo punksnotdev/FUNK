@@ -11,6 +11,8 @@ import {
   getNowPlayingMetadata,
   getHarborStatus,
 } from "./liquidsoap";
+import * as store from "./store";
+import type { LiveCredentialRecord } from "./store";
 
 interface ResolvedCredential {
   id: string;
@@ -37,26 +39,13 @@ function requireInternalSecret(authHeader: string | undefined): boolean {
 // Per-host live transmission credentials. Each call to
 // POST /v1/radio/live/credentials mints a unique username + password, hashed
 // at rest. Liquidsoap calls harbor-auth to validate on every connection.
-// Persistence is out of scope for v0.1 — an in-memory Map is fine.
-
-interface LiveCredentialRecord {
-  id: string;
-  label: string;
-  mount: "live" | "breaking";
-  username: string;
-  password_hash: string;
-  created_at: string;
-  expires_at: string;
-  revoked_at: string | null;
-}
-
-const liveCredentials = new Map<string, LiveCredentialRecord>();
+//
+// Backed by a durable bun:sqlite store (see ./store and ADR-004 Slice 1) so
+// minted credentials survive a radio restart — the in-memory Map was the bug.
+// The public + internal contracts are unchanged; only the backing store moved.
 
 function pruneExpired(): void {
-  const now = Date.now();
-  for (const [id, rec] of liveCredentials) {
-    if (new Date(rec.expires_at).getTime() < now) liveCredentials.delete(id);
-  }
+  store.pruneExpiredCredentials();
 }
 
 // username = slugified label trimmed to 32 chars, guaranteed lowercase alphanum + hyphen
@@ -93,7 +82,7 @@ async function mintCredential(
     expires_at: new Date(now.getTime() + ttlSeconds * 1000).toISOString(),
     revoked_at: null,
   };
-  liveCredentials.set(id, rec);
+  store.insertCredential(rec);
   return { record: rec, plainPassword: plain };
 }
 
@@ -102,54 +91,37 @@ async function mintCredential(
 // Tracks active and recent harbor sessions for attribution lookups. Sessions
 // older than 7 days after disconnect are GC'd.
 //
-// Keyed by credential_id. activeSessions tracks which credential_id is
-// currently live on a given mount — used by the disconnect hook (liquidsoap
+// Backed by the same durable bun:sqlite store as credentials (see ./store and
+// ADR-004 Slice 1) so in-progress and recent sessions survive a radio restart.
+// Keyed by credential_id. The "currently live on a given mount" lookup
+// (formerly the activeSessions Map) is derived from sessions where
+// disconnected_at IS NULL — used by the disconnect hook (liquidsoap
 // on_disconnect has no credential context, so radio resolves it internally).
-
-interface SessionRecord {
-  credential_id: string;
-  mount: string;
-  label: string;
-  connected_at: string;
-  disconnected_at: string | null;
-}
-
-const sessions = new Map<string, SessionRecord>();
-// mount → credential_id for the currently-connected source on that mount
-const activeSessions = new Map<string, string>();
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function pruneSessions(): void {
-  const cutoff = Date.now() - SESSION_TTL_MS;
-  for (const [id, s] of sessions) {
-    if (s.disconnected_at && new Date(s.disconnected_at).getTime() < cutoff) {
-      sessions.delete(id);
-    }
-  }
+  const cutoff = new Date(Date.now() - SESSION_TTL_MS).toISOString();
+  store.pruneOldSessions(cutoff);
 }
 
 function recordSessionStart(credentialId: string, mount: string, label: string, connectedAt: string): void {
   pruneSessions();
-  sessions.set(credentialId, {
+  store.upsertSession({
     credential_id: credentialId,
     mount,
     label,
     connected_at: connectedAt,
     disconnected_at: null,
   });
-  activeSessions.set(mount, credentialId);
 }
 
 // Accepts credential_id directly (preferred) or resolves from the active mount.
 function recordSessionEnd(credentialIdOrNull: string | null, mount: string | null, disconnectedAt: string): boolean {
-  const credentialId = credentialIdOrNull ?? (mount ? activeSessions.get(mount) ?? null : null);
+  const credentialId =
+    credentialIdOrNull ?? (mount ? store.getActiveCredentialForMount(mount) : null);
   if (!credentialId) return false;
-  const s = sessions.get(credentialId);
-  if (!s) return false;
-  s.disconnected_at = disconnectedAt;
-  if (mount) activeSessions.delete(mount);
-  return true;
+  return store.endSession(credentialId, disconnectedAt);
 }
 
 // --- Schedule ---------------------------------------------------------------
@@ -235,8 +207,7 @@ function findAttribution(
 ): { credential_id: string; label: string } | null {
   const ts = new Date(startedAt).getTime();
   const TOLERANCE_MS = 30 * 1000;
-  for (const s of sessions.values()) {
-    if (s.mount !== mount) continue;
+  for (const s of store.listSessionsByMount(mount)) {
     const connectedMs = new Date(s.connected_at).getTime();
     const disconnectedMs = s.disconnected_at ? new Date(s.disconnected_at).getTime() : Date.now();
     if (ts >= connectedMs - TOLERANCE_MS && ts <= disconnectedMs + TOLERANCE_MS) {
@@ -284,9 +255,7 @@ app.post("/v1/radio/internal/harbor-auth", async (c) => {
   }
 
   pruneExpired();
-  const cred = [...liveCredentials.values()].find(
-    (r) => r.mount === body.mount && r.username === body.username,
-  );
+  const cred = store.getCredentialByMountUsername(body.mount, body.username);
   if (!cred) return c.json({ valid: false }, 200);
   if (cred.revoked_at) return c.json({ valid: false }, 200);
   if (new Date(cred.expires_at).getTime() < Date.now()) return c.json({ valid: false }, 200);
@@ -441,7 +410,7 @@ app.post("/v1/radio/live/credentials", async (c) => {
 app.get("/v1/radio/live/credentials", (c) => {
   pruneExpired();
   return c.json({
-    credentials: [...liveCredentials.values()].map((r) => ({
+    credentials: store.listCredentials().map((r) => ({
       id: r.id,
       label: r.label,
       mount: r.mount,
@@ -454,9 +423,8 @@ app.get("/v1/radio/live/credentials", (c) => {
 });
 
 app.delete("/v1/radio/live/credentials/:id", (c) => {
-  const rec = liveCredentials.get(c.req.param("id"));
-  if (!rec) return c.json({ error: "not found" }, 404);
-  rec.revoked_at = new Date().toISOString();
+  const ok = store.revokeCredential(c.req.param("id"), new Date().toISOString());
+  if (!ok) return c.json({ error: "not found" }, 404);
   return c.body(null, 204);
 });
 

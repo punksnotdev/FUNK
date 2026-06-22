@@ -19,6 +19,11 @@ export const env = {
   SCHEDULE_FILE: process.env.SCHEDULE_FILE ?? "/etc/funk/schedule.m3u",
   RECORDINGS_DIR: process.env.RECORDINGS_DIR ?? "/var/funk/recordings",
 
+  // Durable store for harbor credentials + sessions (ADR-004, Slice 1). A
+  // bun:sqlite file on a persistent volume so minted credentials and live
+  // sessions survive a radio restart/redeploy. Parent dir is created on boot.
+  RADIO_DB_PATH: process.env.RADIO_DB_PATH ?? "/var/funk/radio/radio.db",
+
   // Shared secret for internal endpoints called by liquidsoap and the recordings
   // daemon. Never exposed publicly — loopback / media_private plane only.
   RADIO_INTERNAL_SECRET: required("RADIO_INTERNAL_SECRET"),
