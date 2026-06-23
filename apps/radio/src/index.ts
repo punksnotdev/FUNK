@@ -165,42 +165,13 @@ async function writePlaylist(entries: ScheduleEntry[]): Promise<void> {
   await writeFile(env.SCHEDULE_FILE, lines.join("\n") + "\n", "utf8");
 }
 
-// --- Recordings discovery ---------------------------------------------------
-
-interface RecordingEntry {
-  id: string;
-  source: "live" | "breaking";
-  started_at: string;
-  duration_seconds: number | null;
-  size_bytes: number | null;
-  storage_url: string;
-  storage_key: string;
-  credential_id: string | null;
-  credential_label: string | null;
-}
-
-// Populated by the recordings daemon via POST /v1/radio/internal/recording-uploaded
-// after each successful upload. Keyed by storage_key so retries are idempotent.
-const uploadedRecordings = new Map<string, RecordingEntry>();
-
-// Filename shape comes from funk.liq's output.file templates:
-//   live-YYYYMMDD-HHMMSS.mp3
-//   breaking-YYYYMMDD-HHMMSS.mp3
-const RECORDING_FILENAME_RE = /^(live|breaking)-(\d{8})-(\d{6})\.mp3$/;
-
-function parseRecordingFilename(
-  filename: string,
-): { source: "live" | "breaking"; started_at: string } | null {
-  const m = filename.match(RECORDING_FILENAME_RE);
-  if (!m || !m[1] || !m[2] || !m[3]) return null;
-  const source = m[1] as "live" | "breaking";
-  const d = m[2];
-  const t = m[3];
-  const iso = `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}T${t.slice(0, 2)}:${t.slice(2, 4)}:${t.slice(4, 6)}Z`;
-  return { source, started_at: iso };
-}
-
-// Find the session whose window contains started_at within ±30s tolerance.
+// --- Recording attribution lookup -------------------------------------------
+//
+// Used by the daemon at upload time (GET /v1/radio/internal/recording-attribution)
+// to find which host's session was on-air when a recording started, so the
+// attribution can be baked into the storage key. This is the live-session
+// window match — distinct from the recordings *index* below (which is now
+// derived from storage, not held in memory).
 function findAttribution(
   mount: string,
   startedAt: string,
@@ -217,11 +188,192 @@ function findAttribution(
   return null;
 }
 
-function listRecordings(sinceIso: string | undefined): RecordingEntry[] {
+// --- Recordings discovery ---------------------------------------------------
+//
+// ADR-004 Slice 3: storage is the source of truth. There is NO in-memory index.
+// GET /v1/radio/recordings is answered by listing the control-plane storage
+// `recordings/` prefix and parsing each key (which already encodes attribution,
+// per the v0.1 contract). size_bytes comes from the listing; duration_seconds /
+// started_at come from object metadata stamped by the recordings daemon at
+// upload time (started_at also re-derivable from the key). The index can't drift
+// because there is no index — the objects ARE the truth. Plane isolation holds:
+// radio calls storage over HTTP, never MinIO/postgres directly.
+
+interface RecordingEntry {
+  id: string;
+  source: "live" | "breaking";
+  started_at: string;
+  duration_seconds: number | null;
+  size_bytes: number | null;
+  storage_url: string;
+  storage_key: string;
+  credential_id: string | null;
+  credential_label: string | null;
+}
+
+// Storage key shape (per docs/v0.1-attributed-live-sessions.md):
+//   recordings/<mount>/<mount>-<YYYYMMDD>-<HHMMSS>-<safe_label>-<short_cred_id>.mp3
+//   recordings/<mount>/<mount>-<YYYYMMDD>-<HHMMSS>-unattributed.mp3
+// short_cred_id is the first 8 chars of the credential UUID (hyphens stripped),
+// hence exactly 8 hex chars. safe_label is [a-z0-9-], so the trailing
+// `-<8 hex>` is the attribution tail; everything before it (after the timestamp)
+// is the label. `unattributed` has no tail.
+const RECORDING_KEY_RE =
+  /^recordings\/(live|breaking)\/(live|breaking)-(\d{8})-(\d{6})-(.+)\.mp3$/;
+
+interface ParsedKey {
+  source: "live" | "breaking";
+  started_at: string;
+  safe_label: string | null; // null when unattributed
+  short_cred_id: string | null; // 8 hex chars, or null when unattributed
+}
+
+function parseRecordingKey(key: string): ParsedKey | null {
+  const m = key.match(RECORDING_KEY_RE);
+  if (!m || !m[1] || !m[3] || !m[4] || !m[5]) return null;
+  const source = m[1] as "live" | "breaking";
+  const d = m[3];
+  const t = m[4];
+  const tail = m[5]; // either "unattributed" or "<safe_label>-<short_cred_id>"
+  const started_at = `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}T${t.slice(0, 2)}:${t.slice(2, 4)}:${t.slice(4, 6)}Z`;
+
+  if (tail === "unattributed") {
+    return { source, started_at, safe_label: null, short_cred_id: null };
+  }
+  // Split off the trailing `-<8 hex>` attribution id; the rest is the label.
+  const credMatch = tail.match(/^(.*)-([0-9a-f]{8})$/);
+  if (credMatch && credMatch[1]) {
+    return { source, started_at, safe_label: credMatch[1], short_cred_id: credMatch[2]! };
+  }
+  // Doesn't match the attributed tail shape (e.g. a label with no cred id);
+  // expose what we have as the label, no cred id.
+  return { source, started_at, safe_label: tail, short_cred_id: null };
+}
+
+// Best-effort attribution from the key's 8-char short id. The short id is only 8
+// hex chars, so we match it against live credentials to recover the full id and
+// the human label. If no live credential matches (e.g. expired-and-pruned, or a
+// different radio instance minted it), we still expose what the key carries: the
+// short id (un-padded) and the de-slugged safe_label.
+function resolveKeyAttribution(parsed: ParsedKey): {
+  credential_id: string | null;
+  credential_label: string | null;
+} {
+  if (!parsed.short_cred_id) return { credential_id: null, credential_label: null };
+  for (const cred of store.listCredentials()) {
+    if (cred.id.replace(/-/g, "").slice(0, 8) === parsed.short_cred_id) {
+      return { credential_id: cred.id, credential_label: cred.label };
+    }
+  }
+  // No live match — surface the key's own data so the consumer isn't left blank.
+  return {
+    credential_id: parsed.short_cred_id,
+    credential_label: parsed.safe_label,
+  };
+}
+
+// --- Storage service token --------------------------------------------------
+//
+// The storage listing endpoint is authed (any valid FUNK credential). Radio
+// mints its own service credential once at startup via ADMIN_BOOTSTRAP_TOKEN —
+// the same bootstrap the recordings daemon uses. Minting is retried in the
+// background; until it succeeds, GET /recordings returns an empty list rather
+// than failing the route.
+
+let storageToken: string | null = null;
+
+async function mintStorageToken(): Promise<string> {
+  const res = await fetch(`${env.AUTH_URL}/v1/credentials`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.ADMIN_BOOTSTRAP_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ label: "radio-recordings-reader" }),
+  });
+  if (!res.ok) throw new Error(`auth mint failed: ${res.status} ${await res.text()}`);
+  const data = (await res.json()) as { token: string };
+  return data.token;
+}
+
+async function ensureStorageToken(): Promise<void> {
+  if (storageToken) return;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      storageToken = await mintStorageToken();
+      console.log("storage service token minted");
+      return;
+    } catch (err) {
+      const wait = Math.min(2 ** attempt, 30);
+      console.warn(`storage token mint failed (attempt ${attempt}): ${err}; retrying in ${wait}s`);
+      await new Promise((r) => setTimeout(r, wait * 1000));
+    }
+  }
+}
+
+interface StorageObject {
+  key: string;
+  size_bytes: number;
+  metadata?: Record<string, string>;
+}
+
+async function listStorageRecordings(): Promise<StorageObject[]> {
+  if (!storageToken) {
+    // First call(s) before the token is ready: trigger a mint, return empty.
+    ensureStorageToken().catch(() => {});
+    return [];
+  }
+  const url = `${env.STORAGE_URL}/files?prefix=recordings/&metadata=1`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${storageToken}` } });
+  if (res.status === 401) {
+    // Token expired/revoked — drop it and re-mint on the next call.
+    storageToken = null;
+    ensureStorageToken().catch(() => {});
+    return [];
+  }
+  if (!res.ok) {
+    throw new Error(`storage list failed: ${res.status} ${await res.text()}`);
+  }
+  const data = (await res.json()) as { objects?: StorageObject[] };
+  return data.objects ?? [];
+}
+
+async function listRecordings(sinceIso: string | undefined): Promise<RecordingEntry[]> {
   const since = sinceIso ? new Date(sinceIso).getTime() : 0;
-  const results = [...uploadedRecordings.values()].filter(
-    (e) => new Date(e.started_at).getTime() >= since,
-  );
+  const objects = await listStorageRecordings();
+  const results: RecordingEntry[] = [];
+  for (const obj of objects) {
+    const parsed = parseRecordingKey(obj.key);
+    if (!parsed) continue; // unexpected key shape under recordings/; skip
+    if (new Date(parsed.started_at).getTime() < since) continue;
+
+    const attribution = resolveKeyAttribution(parsed);
+    // Prefer metadata-stamped values when present; fall back to the key.
+    // Keys are hyphenated to match what storage stores (S3 lowercases + the
+    // daemon sends `started-at`/`duration-seconds`). S3 returns metadata keys
+    // lowercased; we read both shapes defensively.
+    const md = obj.metadata ?? {};
+    const metaStartedAt = md["started-at"] ?? md["started_at"];
+    const started_at = metaStartedAt && !Number.isNaN(Date.parse(metaStartedAt))
+      ? metaStartedAt
+      : parsed.started_at;
+    const metaDuration = md["duration-seconds"] ?? md["duration_seconds"];
+    const duration_seconds = metaDuration != null && metaDuration !== ""
+      ? Number(metaDuration)
+      : null;
+
+    results.push({
+      id: obj.key,
+      source: parsed.source,
+      started_at,
+      duration_seconds: Number.isFinite(duration_seconds as number) ? duration_seconds : null,
+      size_bytes: obj.size_bytes ?? null,
+      storage_url: `${env.STORAGE_PUBLIC_URL}/files/${obj.key}`,
+      storage_key: obj.key,
+      credential_id: attribution.credential_id,
+      credential_label: attribution.credential_label,
+    });
+  }
   results.sort((a, b) => b.started_at.localeCompare(a.started_at));
   return results;
 }
@@ -301,37 +453,17 @@ app.get("/v1/radio/internal/recording-attribution", async (c) => {
   return c.json({ credential_id: attribution.credential_id, label: attribution.label }, 200);
 });
 
-// Daemon notifies radio after a successful upload. Idempotent on storage_key
-// (re-notifications overwrite the entry, which is what we want on retry).
+// ADR-004 Slice 3: the recordings index is now derived from storage (the objects
+// ARE the truth), so radio no longer keeps an in-memory copy. This endpoint is
+// retained as a no-op shim so the recordings daemon's post-upload notification
+// keeps getting a 2xx during the transition (the daemon treats a non-2xx as a
+// stale-index warning). It records nothing — GET /v1/radio/recordings reads the
+// storage listing instead.
 app.post("/v1/radio/internal/recording-uploaded", async (c) => {
   if (!requireInternalSecret(c.req.header("authorization"))) {
     return c.json({ error: "unauthorized" }, 401);
   }
-  const body = (await c.req.json().catch(() => null)) as {
-    mount?: "live" | "breaking";
-    started_at?: string;
-    storage_key?: string;
-    storage_url?: string;
-    duration_seconds?: number | null;
-    size_bytes?: number | null;
-    credential_id?: string | null;
-    credential_label?: string | null;
-  } | null;
-  if (!body?.mount || !body?.started_at || !body?.storage_key || !body?.storage_url) {
-    return c.json({ error: "mount, started_at, storage_key, storage_url required" }, 400);
-  }
-  uploadedRecordings.set(body.storage_key, {
-    id: body.storage_key,
-    source: body.mount,
-    started_at: body.started_at,
-    duration_seconds: body.duration_seconds ?? null,
-    size_bytes: body.size_bytes ?? null,
-    storage_url: body.storage_url,
-    storage_key: body.storage_key,
-    credential_id: body.credential_id ?? null,
-    credential_label: body.credential_label ?? null,
-  });
-  return c.json({ recorded: true }, 200);
+  return c.json({ recorded: true, note: "no-op: recordings index derived from storage" }, 200);
 });
 
 // All other /v1/* routes require a valid FUNK service credential.
@@ -479,12 +611,22 @@ app.post("/v1/radio/interrupt/live", async (c) => {
   });
 });
 
-// recordings (discovery — storage_url populated by daemon after upload)
+// recordings (discovery — ADR-004 Slice 3: derived by listing storage's
+// `recordings/` prefix; no in-memory index, so this survives a radio restart)
 
-app.get("/v1/radio/recordings", (c) => {
+app.get("/v1/radio/recordings", async (c) => {
   const since = c.req.query("since") ?? undefined;
-  return c.json({ recordings: listRecordings(since) });
+  try {
+    return c.json({ recordings: await listRecordings(since) });
+  } catch (err) {
+    return c.json({ error: "recordings listing failed", detail: String(err) }, 503);
+  }
 });
+
+// Mint the storage service token in the background at boot so the first
+// GET /recordings doesn't pay the mint latency. Non-fatal if it fails here —
+// listStorageRecordings retries on demand.
+ensureStorageToken().catch((err) => console.warn(`initial storage token mint failed: ${err}`));
 
 const port = env.PORT;
 console.log(`funk-radio listening on :${port} (tenant=${env.TENANT_ID})`);

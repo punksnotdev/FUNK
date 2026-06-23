@@ -162,6 +162,18 @@ async function uploadRecording(
   // storage server honors this key (sanitized + tenant-prefixed) so the
   // attributed filename survives the round-trip to MinIO.
   form.append("storage_key", storageKey);
+  // Stamp recording metadata onto the S3 object (ADR-004 Slice 3). radio reads
+  // these back via the storage listing to populate duration_seconds/started_at
+  // without keeping an in-memory index. started_at is authoritative here (parsed
+  // from the filename the engine wrote); duration_seconds may be null if ffprobe
+  // could not read it. credential attribution is already encoded in the key, so
+  // it is not duplicated in metadata.
+  // Hyphenated keys: S3 user-metadata keys are lowercased and best kept to
+  // [a-z0-9-] (underscores in x-amz-meta-* headers are normalized inconsistently
+  // across S3 implementations/proxies). radio reads these exact keys back.
+  const objectMetadata: Record<string, string> = { mount: meta.mount, "started-at": meta.started_at };
+  if (meta.duration_seconds != null) objectMetadata["duration-seconds"] = String(meta.duration_seconds);
+  form.append("metadata", JSON.stringify(objectMetadata));
 
   const res = await fetch(`${env.STORAGE_URL}/uploads`, {
     method: "POST",
@@ -187,18 +199,26 @@ async function notifyRadioOfUpload(payload: {
   credential_id?: string;
   credential_label?: string;
 }): Promise<void> {
-  const res = await fetch(`${env.RADIO_URL}/v1/radio/internal/recording-uploaded`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.RADIO_INTERNAL_SECRET}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    // Non-fatal — the recording is uploaded, radio's index is just stale.
-    console.warn(`radio notify failed: ${res.status} ${body}`);
+  // ADR-004 Slice 3: radio derives its recordings index from storage, so this
+  // notify is now a no-op shim on the radio side — purely best-effort. It must
+  // NEVER fail the upload: the bytes are already in storage, and a connection
+  // error (e.g. radio mid-restart) must not propagate up and strand the local
+  // file. Swallow everything, including the fetch rejection itself.
+  try {
+    const res = await fetch(`${env.RADIO_URL}/v1/radio/internal/recording-uploaded`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.RADIO_INTERNAL_SECRET}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      console.warn(`radio notify failed: ${res.status} ${body}`);
+    }
+  } catch (err) {
+    console.warn(`radio notify failed (non-fatal): ${err}`);
   }
 }
 
