@@ -169,9 +169,11 @@ app.get("/files", async (c) => {
   }
   const withMetadata = c.req.query("metadata") === "1";
 
-  // The tenant prefix is always applied server-side; clients never see it.
+  // The tenant prefix is always applied server-side. The returned `key` is the
+  // FULL stored key (tenant-prefixed) — identical to what POST /uploads returns
+  // and what GET /files/<key> expects — so a listed key round-trips to a fetch
+  // without the caller reconstructing the prefix.
   const s3Prefix = `${env.TENANT_ID}/${rawPrefix}`;
-  const tenantPrefix = `${env.TENANT_ID}/`;
 
   const objects: Array<{ key: string; size_bytes: number; metadata?: Record<string, string> }> = [];
   let continuationToken: string | undefined;
@@ -183,9 +185,7 @@ app.get("/files", async (c) => {
     }));
     for (const obj of out.Contents ?? []) {
       if (!obj.Key) continue;
-      // Strip the tenant prefix so callers see the same logical key they upload.
-      const logicalKey = obj.Key.startsWith(tenantPrefix) ? obj.Key.slice(tenantPrefix.length) : obj.Key;
-      objects.push({ key: logicalKey, size_bytes: obj.Size ?? 0 });
+      objects.push({ key: obj.Key, size_bytes: obj.Size ?? 0 });
     }
     continuationToken = out.IsTruncated ? out.NextContinuationToken : undefined;
   } while (continuationToken);
@@ -197,7 +197,7 @@ app.get("/files", async (c) => {
       try {
         const head = await s3.send(new HeadObjectCommand({
           Bucket: env.S3_BUCKET,
-          Key: `${tenantPrefix}${o.key}`,
+          Key: o.key,
         }));
         if (head.Metadata && Object.keys(head.Metadata).length > 0) {
           o.metadata = head.Metadata as Record<string, string>;

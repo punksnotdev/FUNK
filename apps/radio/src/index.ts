@@ -214,12 +214,14 @@ interface RecordingEntry {
 // Storage key shape (per docs/v0.1-attributed-live-sessions.md):
 //   recordings/<mount>/<mount>-<YYYYMMDD>-<HHMMSS>-<safe_label>-<short_cred_id>.mp3
 //   recordings/<mount>/<mount>-<YYYYMMDD>-<HHMMSS>-unattributed.mp3
-// short_cred_id is the first 8 chars of the credential UUID (hyphens stripped),
-// hence exactly 8 hex chars. safe_label is [a-z0-9-], so the trailing
-// `-<8 hex>` is the attribution tail; everything before it (after the timestamp)
-// is the label. `unattributed` has no tail.
+// The storage listing returns the FULL stored key, which is tenant-prefixed
+// (e.g. `default/recordings/...`). We tolerate any leading path prefix before
+// the `recordings/` segment. short_cred_id is the first 8 chars of the
+// credential UUID (hyphens stripped), hence exactly 8 hex chars. safe_label is
+// [a-z0-9-], so the trailing `-<8 hex>` is the attribution tail; everything
+// before it (after the timestamp) is the label. `unattributed` has no tail.
 const RECORDING_KEY_RE =
-  /^recordings\/(live|breaking)\/(live|breaking)-(\d{8})-(\d{6})-(.+)\.mp3$/;
+  /(?:^|\/)recordings\/(live|breaking)\/(live|breaking)-(\d{8})-(\d{6})-(.+)\.mp3$/;
 
 interface ParsedKey {
   source: "live" | "breaking";
