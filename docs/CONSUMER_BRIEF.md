@@ -68,6 +68,49 @@ GET /v1/radio/now-playing
 
 A consumer-side hook on episode save/delete recomputes the window and PUTs it. Idempotent.
 
+### Now-playing payload
+
+`GET /v1/radio/now-playing` returns `{ source, metadata }`. Switch UI on the
+**top-level `source`** — ignore `metadata.source`, which is liquidsoap's raw
+internal tag (often `"main"`).
+
+- **Reliably emitted:** `"schedule"` (an annotated playlist track is on air) and
+  `"unknown"` (nothing on air / radio couldn't resolve). `"main"` and other raw
+  liquidsoap source names appear for un-annotated sources such as the fallback —
+  treat the enum as open: `"schedule" | "unknown" | (string & {})`.
+- **`source` does NOT reliably report live/breaking.** Harbor sources are live
+  inputs, not "requests", so during a host takeover now-playing returns
+  `"unknown"` or a stale value. **Drive live/breaking UI from
+  `GET /v1/radio/live/status`** (`{ live_connected, breaking_connected }`), not
+  from this endpoint.
+
+`metadata` is a free-form, best-effort object:
+
+- **`title`** is guaranteed only for scheduled tracks (FUNK annotates it into the
+  playlist). Everything else (`artist`, `genre`, `album`, `song`, liquidsoap
+  internals like `status`/`rid`) appears only if the source carries it — **not
+  guaranteed**.
+- **No artwork/cover URL, no show/program name, and no `credential_label`** are
+  ever injected. Pull artwork, program name, and host attribution from your own
+  domain data (match on the `liveCredentialId`/label you stamped at mint time).
+- **No timing fields** (`started_at` / `elapsed` / `duration_seconds`).
+  now-playing is point-in-time — build any progress indicator from your own
+  schedule.
+- **Empty case:** FUNK returns `metadata: {}` (empty object) when nothing is on
+  air or on the error/503 branch.
+
+Example (scheduled track):
+
+```json
+{ "source": "schedule",
+  "metadata": { "funk_source": "schedule", "title": "Marisol Friday show",
+                "song": "Marisol Friday show", "source": "main", "status": "playing" } }
+```
+
+Nothing on air: `{ "source": "unknown", "metadata": {} }`. (`artist`/`genre`/etc.
+appear only when the file's tags carry them; `metadata.source: "main"` is
+liquidsoap's internal tag — read the **top-level** `source`.)
+
 ### Live transmission credentials
 
 ```
