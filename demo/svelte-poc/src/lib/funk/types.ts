@@ -13,3 +13,20 @@ export interface NowPlaying {
   // now-playing label when present.
   metadata: Record<string, unknown> | null;
 }
+
+// One programming entry in the radio schedule. Mirrors FUNK's ScheduleEntry:
+// only `audio_url` is required; `title` and `duration_seconds` are optional,
+// and `at` (start time) exists in the contract but this demo doesn't set it.
+export interface ScheduleEntry {
+  audio_url: string;
+  at?: string;
+  title?: string;
+  duration_seconds?: number;
+}
+
+// Response of GET /v1/radio/schedule. `applied_at` is null when no schedule
+// has ever been applied (the m3u file doesn't exist yet).
+export interface ScheduleWindow {
+  applied_at: string | null;
+  entries: ScheduleEntry[];
+}
