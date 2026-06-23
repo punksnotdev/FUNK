@@ -95,8 +95,9 @@ internal tag (often `"main"`).
 - **`source` does NOT reliably report live/breaking.** Harbor sources are live
   inputs, not "requests", so during a host takeover now-playing returns
   `"unknown"` or a stale value. **Drive live/breaking UI from
-  `GET /v1/radio/live/status`** (`{ live_connected, breaking_connected }`), not
-  from this endpoint.
+  `GET /v1/radio/live/status`** (connectivity booleans **plus** the on-air
+  `live_credential`/`breaking_credential` identity — see below), not from this
+  endpoint.
 
 `metadata` is a free-form, best-effort object:
 
@@ -146,6 +147,18 @@ Mint a credential when a host is approved to go live for an upcoming show. Hand 
 
 - **`password` is returned exactly once.** It is never stored in plaintext and cannot be re-fetched — capture it at mint time.
 - **`harbor_host` / `harbor_port` are the media plane's *internal* address** (`liquidsoap` : `8001` live / `8002` breaking). They are **not reachable as-is** from outside the media network. In **local dev**, rewrite to `localhost` and the host-published ports (**`7481` live, `7482` breaking**) before handing them to a broadcasting tool. In **prod**, map them to your public icecast ingress. Don't pass the raw values straight through to a host.
+
+**`GET /v1/radio/live/status`** is the authoritative "who is on air right now":
+
+```json
+{ "live_connected": true,
+  "live_credential": { "credential_id": "...", "label": "Marisol Friday show", "connected_at": "..." },
+  "breaking_connected": false,
+  "breaking_credential": null }
+```
+
+- `live_connected` / `breaking_connected` (booleans) come from the media plane — the authoritative "is a source actually feeding audio" signal.
+- `live_credential` / `breaking_credential` carry the **real on-air host identity** — the credential currently connected on that mount, from FUNK's active harbor session. Render "Live: \<host>" from `label`. Each is `null` when that mount isn't connected, or (best-effort) if FUNK can't resolve the active session — fall back to an unnamed "live now" then. **This is the source of truth for who's live; don't infer it from the schedule, and don't use `now-playing`'s `source` for it.**
 
 ### Interrupts (breaking news)
 

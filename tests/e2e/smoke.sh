@@ -299,6 +299,16 @@ done
 "$HARBOR_CONNECTED" || die "live harbor not connected after 20s. status: $STATUS"
 ok "liquidsoap input.harbor.status confirms source connected"
 
+# live/status reports the real on-air host identity (from auth's active harbor
+# session), not just connectivity — the connected credential must appear.
+LIVE_STATUS=$(curl -sS http://localhost:${H_RADIO}/v1/radio/live/status \
+  -H "authorization: Bearer $TOKEN")
+echo "$LIVE_STATUS" | grep -q '"live_connected":true' \
+  || die "live/status live_connected not true while harbor connected: $LIVE_STATUS"
+echo "$LIVE_STATUS" | grep -q "\"credential_id\":\"$LIVE_CRED_ID\"" \
+  || die "live/status missing on-air credential identity ($LIVE_CRED_ID): $LIVE_STATUS"
+ok "live/status reports on-air credential identity (live_credential matches)"
+
 # -- recording attribution --------------------------------------------------
 
 note "recording attribution"

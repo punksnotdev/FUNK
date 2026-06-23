@@ -265,6 +265,24 @@ async function findAttribution(
   return (await res.json()) as { credential_id: string; label: string };
 }
 
+interface ActiveSession {
+  credential_id: string;
+  mount: string;
+  label: string;
+  connected_at: string;
+}
+
+// Which credential is currently connected per mount, from auth's active harbor
+// sessions. Used to enrich live/status with the real on-air host identity.
+async function listActiveSessions(): Promise<ActiveSession[]> {
+  const res = await fetch(authInternalUrl("/v1/internal/harbor/active"), {
+    headers: AUTH_INTERNAL_HEADERS,
+  });
+  if (!res.ok) throw new Error(`auth active sessions failed: ${res.status}`);
+  const body = (await res.json()) as { sessions?: ActiveSession[] };
+  return body.sessions ?? [];
+}
+
 // --- Schedule ---------------------------------------------------------------
 
 interface ScheduleEntry {
@@ -802,10 +820,35 @@ app.delete("/v1/radio/live/credentials/:id", async (c) => {
 app.get("/v1/radio/live/status", async (c) => {
   try {
     const status = await getHarborStatus();
-    return c.json(status);
+    // Enrich connectivity with the real on-air host identity per mount, sourced
+    // from auth's active harbor session (NOT a schedule guess). Best-effort: an
+    // auth blip falls back to connectivity booleans with null identity.
+    let sessions: ActiveSession[] = [];
+    try {
+      sessions = await listActiveSessions();
+    } catch {
+      // auth unreachable — keep the booleans, omit identity.
+    }
+    const credentialFor = (mount: string) => {
+      const s = sessions.find((x) => x.mount === mount);
+      return s
+        ? { credential_id: s.credential_id, label: s.label, connected_at: s.connected_at }
+        : null;
+    };
+    return c.json({
+      ...status,
+      live_credential: status.live_connected ? credentialFor("live") : null,
+      breaking_credential: status.breaking_connected ? credentialFor("breaking") : null,
+    });
   } catch (err) {
     return c.json(
-      { live_connected: false, breaking_connected: false, error: String(err) },
+      {
+        live_connected: false,
+        breaking_connected: false,
+        live_credential: null,
+        breaking_credential: null,
+        error: String(err),
+      },
       503,
     );
   }

@@ -347,6 +347,21 @@ app.get("/v1/internal/harbor/attribution", async (c) => {
   return c.json({ credential_id: row.credential_id, label: row.label }, 200);
 });
 
+// Active harbor sessions — which credential is currently connected on each mount
+// (disconnected_at IS NULL). Lets radio's live/status report the real on-air host
+// identity instead of the consumer having to guess from the schedule.
+app.get("/v1/internal/harbor/active", async (c) => {
+  if (!authorizedInternal(c)) return c.json({ error: "unauthorized" }, 401);
+
+  const rows = await sql<Array<{ credential_id: string; mount: string; label: string; connected_at: string }>>`
+    SELECT credential_id, mount, label, connected_at
+    FROM harbor_sessions
+    WHERE tenant_id = ${env.TENANT_ID} AND disconnected_at IS NULL
+    ORDER BY connected_at DESC
+  `;
+  return c.json({ sessions: rows }, 200);
+});
+
 const port = env.PORT;
 console.log(`funk-auth listening on :${port} (tenant=${env.TENANT_ID})`);
 
