@@ -54,6 +54,11 @@ Standard upload/serve over MinIO. Used for:
 
 Files live in MinIO; FUNK returns URLs the consumer's pages can embed (with HTTP Range for seek/stream playback in the browser).
 
+**Uploading** — `POST /uploads` (multipart: `file`, optional `storage_key`, optional `metadata` JSON). Two things to know:
+
+- **Always read the `key` from the response — don't assume it equals what you sent.** The server prepends the tenant prefix to any `storage_key` you supply, and if your `storage_key` is malformed (anything outside `[a-zA-Z0-9._/-]`, a leading slash, or a `..` segment) it is **silently replaced with a server-generated random key — no 4xx**. The returned `key` is the canonical handle that `GET /files/<key>` expects.
+- The response `id` is a storage DB UUID, **distinct from `key`**. Serve and fetch by `key`, not `id`.
+
 ## Radio API
 
 Four operational categories. **All scheduling is declarative apply — no CRUD endpoints.** Edit/delete happens in the consumer's domain layer; whenever the broadcast schedule changes, the consumer recomputes the next-N-hours window and PUTs it.
@@ -67,6 +72,15 @@ GET /v1/radio/now-playing
 ```
 
 A consumer-side hook on episode save/delete recomputes the window and PUTs it. Idempotent.
+
+**Entry shape.** `PUT` body is `{ entries: [...] }`. Each entry:
+
+- `audio_url` (**required**) — the only required field; a storage URL or any liquidsoap-readable URI.
+- `title` (optional) — surfaced in `now-playing` for scheduled tracks.
+- `duration_seconds` (optional).
+- `at` (optional) — accepted, but in v0 it is **not wall-clock-anchored**: the window plays as a sequential playlist, so `at` is advisory metadata, not a scheduled start time.
+
+Fields are `at` / `duration_seconds` — **not** `starts_at` / `ends_at`.
 
 ### Now-playing payload
 
@@ -122,6 +136,17 @@ GET    /v1/radio/live/status
 
 Mint a credential when a host is approved to go live for an upcoming show. Hand it to the host. The host's broadcasting tool connects to FUNK's icecast harbor mount with the credential. Revoke after the show.
 
+`POST /v1/radio/live/credentials` (and `POST /v1/radio/interrupt/live` for breaking) returns:
+
+```json
+{ "credential_id": "...", "label": "...", "mount": "live",
+  "harbor_host": "...", "harbor_port": 8001,
+  "username": "...", "password": "...", "expires_at": "..." }
+```
+
+- **`password` is returned exactly once.** It is never stored in plaintext and cannot be re-fetched — capture it at mint time.
+- **`harbor_host` / `harbor_port` are the media plane's *internal* address** (`liquidsoap` : `8001` live / `8002` breaking). They are **not reachable as-is** from outside the media network. In **local dev**, rewrite to `localhost` and the host-published ports (**`7481` live, `7482` breaking**) before handing them to a broadcasting tool. In **prod**, map them to your public icecast ingress. Don't pass the raw values straight through to a host.
+
 ### Interrupts (breaking news)
 
 ```
@@ -139,6 +164,22 @@ GET /v1/radio/recordings?since=<ts>
 ```
 
 FUNK automatically records every live and breaking-news session (and only those — pre-uploaded files don't need re-recording). The consumer polls this endpoint after live shows and attaches the resulting `storage_url` to the relevant episode in its own domain layer. Trimming, splitting, republishing the recording is the consumer's editorial concern.
+
+`GET /v1/radio/recordings?since=<ts>` returns `{ recordings: [...] }`, each:
+
+```json
+{ "id": "default/recordings/live/live-20260613-110550-marisol-1a2b3c4d.mp3",
+  "source": "live", "started_at": "2026-06-13T11:05:50Z",
+  "duration_seconds": 1820, "size_bytes": 29216000,
+  "storage_url": "https://storage.../files/default/recordings/live/...mp3",
+  "storage_key": "default/recordings/live/...mp3",
+  "credential_id": "...", "credential_label": "Marisol Friday show" }
+```
+
+- **`id` == `storage_key`** — the full tenant-prefixed object key, **not** a UUID. (This is the opposite of the Storage API, where `id` is a DB UUID.) Stream/download via `storage_url`.
+- `source` is `"live"` or `"breaking"`; `started_at` (UTC) is derived from the key.
+- `credential_id` / `credential_label` carry host attribution when the session matched a known live credential — **either may be `null`** for an unattributed session. Match them against the `label` you stamped at mint time to recover the show/host from your own domain data.
+- `duration_seconds` may be `null` if the daemon didn't stamp it; `size_bytes` comes from storage and is normally present.
 
 ## What a consumer does NOT do
 
