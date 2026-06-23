@@ -19,6 +19,16 @@ export const env = {
   // sessions live in auth's Postgres). Must match auth's AUTH_INTERNAL_SECRET.
   AUTH_INTERNAL_SECRET: required("AUTH_INTERNAL_SECRET"),
 
+  // ADR-004 Slice 3: GET /v1/radio/recordings is answered by listing the
+  // control-plane storage `recordings/` prefix (no in-memory index). STORAGE_URL
+  // is how radio reaches storage internally; STORAGE_PUBLIC_URL is the host that
+  // ends up in each recording's storage_url (must be reachable by the consumer).
+  // ADMIN_BOOTSTRAP_TOKEN mints radio's own service credential at startup so it
+  // can call the authed listing endpoint (same bootstrap the daemon uses).
+  STORAGE_URL: required("STORAGE_URL"),
+  STORAGE_PUBLIC_URL: process.env.STORAGE_PUBLIC_URL ?? required("STORAGE_URL"),
+  ADMIN_BOOTSTRAP_TOKEN: required("ADMIN_BOOTSTRAP_TOKEN"),
+
   // Liquidsoap control + filesystem layout (shared volumes with liquidsoap).
   LIQUIDSOAP_HOST: process.env.LIQUIDSOAP_HOST ?? "liquidsoap",
   LIQUIDSOAP_TELNET_PORT: Number(process.env.LIQUIDSOAP_TELNET_PORT ?? 1234),

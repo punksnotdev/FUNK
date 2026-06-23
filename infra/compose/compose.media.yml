@@ -119,6 +119,14 @@ services:
       # radio validates over HTTP via auth's internal endpoints, guarded by this
       # shared secret (must match auth's AUTH_INTERNAL_SECRET on the control side).
       AUTH_INTERNAL_SECRET: ${AUTH_INTERNAL_SECRET:?AUTH_INTERNAL_SECRET is required (shared secret radio sends to auth's internal harbor endpoints; must match auth)}
+      # ADR-004 Slice 3: radio answers GET /v1/radio/recordings by listing the
+      # control-plane storage `recordings/` prefix (no in-memory index). STORAGE_URL
+      # is the internal address; STORAGE_PUBLIC_URL is the host baked into each
+      # recording's storage_url (must be reachable by the consumer). ADMIN_BOOTSTRAP_TOKEN
+      # mints radio's own service credential for the authed listing call.
+      STORAGE_URL: ${STORAGE_URL:?STORAGE_URL is required}
+      STORAGE_PUBLIC_URL: ${STORAGE_PUBLIC_URL:-${STORAGE_URL}}
+      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:?ADMIN_BOOTSTRAP_TOKEN is required}
       LIQUIDSOAP_HOST: liquidsoap
       LIQUIDSOAP_TELNET_PORT: 1234
       SCHEDULE_FILE: /etc/funk/schedule.m3u
