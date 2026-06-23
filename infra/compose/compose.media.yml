@@ -114,21 +114,19 @@ services:
       PORT: ${RADIO_PORT:-4003}
       TENANT_ID: ${TENANT_ID:-default}
       AUTH_URL: ${AUTH_URL:?AUTH_URL is required (control-plane auth; e.g. http://auth:4001 on the shared funk_dev network in dev, https://auth.funk.example in prod)}
+      # ADR-004 Amendment (2026-06-23): the media plane is fully stateless.
+      # Harbor credentials + sessions live in the control-plane auth service;
+      # radio validates over HTTP via auth's internal endpoints, guarded by this
+      # shared secret (must match auth's AUTH_INTERNAL_SECRET on the control side).
+      AUTH_INTERNAL_SECRET: ${AUTH_INTERNAL_SECRET:?AUTH_INTERNAL_SECRET is required (shared secret radio sends to auth's internal harbor endpoints; must match auth)}
       LIQUIDSOAP_HOST: liquidsoap
       LIQUIDSOAP_TELNET_PORT: 1234
       SCHEDULE_FILE: /etc/funk/schedule.m3u
       RECORDINGS_DIR: /var/funk/recordings
-      # ADR-004 Slice 1: durable bun:sqlite store for harbor credentials +
-      # sessions, so they survive a radio restart/redeploy. Lives on the
-      # funk_radio_state volume below. The radio container runs as root, so the
-      # default-owned named volume is writable (no init step needed, unlike the
-      # liquidsoap-owned recordings volume).
-      RADIO_DB_PATH: ${RADIO_DB_PATH:-/var/funk/radio/radio.db}
       RADIO_INTERNAL_SECRET: ${RADIO_INTERNAL_SECRET}
     volumes:
       - funk_schedule:/etc/funk
       - funk_recordings:/var/funk/recordings
-      - funk_radio_state:/var/funk/radio
     networks:
       - media_private
     expose:
@@ -231,7 +229,5 @@ volumes:
   hlsdata:
   funk_schedule:
   funk_recordings:
-  # Durable radio-domain state (harbor credentials + sessions; ADR-004 Slice 1).
-  funk_radio_state:
   media_caddy_data:
   media_caddy_config:

@@ -75,6 +75,10 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       TENANT_ID: ${TENANT_ID:-default}
       ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:?ADMIN_BOOTSTRAP_TOKEN is required}
+      # ADR-004 Amendment: guards the internal harbor credential/session
+      # endpoints that the media-plane radio service calls. Must match
+      # AUTH_INTERNAL_SECRET on the media side.
+      AUTH_INTERNAL_SECRET: ${AUTH_INTERNAL_SECRET:?AUTH_INTERNAL_SECRET is required (guards auth's internal harbor endpoints; must match radio)}
     networks:
       - control_private
     expose:

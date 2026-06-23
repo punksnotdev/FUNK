@@ -13,16 +13,17 @@ export const env = {
   // the public HTTPS hostnames of the control plane.
   AUTH_URL: required("AUTH_URL"),
 
+  // Shared secret radio sends (as a bearer) to auth's internal harbor endpoints
+  // for credential persistence + validation and session/attribution bookkeeping
+  // (ADR-004 Amendment — the media plane is now fully stateless; harbor creds +
+  // sessions live in auth's Postgres). Must match auth's AUTH_INTERNAL_SECRET.
+  AUTH_INTERNAL_SECRET: required("AUTH_INTERNAL_SECRET"),
+
   // Liquidsoap control + filesystem layout (shared volumes with liquidsoap).
   LIQUIDSOAP_HOST: process.env.LIQUIDSOAP_HOST ?? "liquidsoap",
   LIQUIDSOAP_TELNET_PORT: Number(process.env.LIQUIDSOAP_TELNET_PORT ?? 1234),
   SCHEDULE_FILE: process.env.SCHEDULE_FILE ?? "/etc/funk/schedule.m3u",
   RECORDINGS_DIR: process.env.RECORDINGS_DIR ?? "/var/funk/recordings",
-
-  // Durable store for harbor credentials + sessions (ADR-004, Slice 1). A
-  // bun:sqlite file on a persistent volume so minted credentials and live
-  // sessions survive a radio restart/redeploy. Parent dir is created on boot.
-  RADIO_DB_PATH: process.env.RADIO_DB_PATH ?? "/var/funk/radio/radio.db",
 
   // Shared secret for internal endpoints called by liquidsoap and the recordings
   // daemon. Never exposed publicly — loopback / media_private plane only.
