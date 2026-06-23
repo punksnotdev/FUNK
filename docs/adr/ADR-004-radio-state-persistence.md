@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted — 2026-06-22
+Accepted — 2026-06-22. **Amended 2026-06-23** (see "Amendment" at the end):
+decision §3 is superseded — the media plane goes *fully* stateless; harbor
+credentials + sessions move to the control plane, and Slice 1's media-plane
+store is removed.
 
 ## Context
 
@@ -125,3 +128,35 @@ Ship in slices; keep `tests/e2e/smoke.sh` green after each.
    parsing keys; remove `uploadedRecordings` and the
    `POST /v1/radio/internal/recording-uploaded` index callback (or keep it as a
    no-op shim during transition).
+
+## Amendment — 2026-06-23: make the media plane *fully* stateless
+
+This supersedes decision §3. The original ADR kept harbor credentials + sessions
+media-plane-local (shipped as Slice 1) to keep the live-broadcast auth path
+independent of control-plane availability. We are reversing that call: **the media
+plane becomes fully stateless.**
+
+- **Credentials + sessions move to the control plane.** The `auth` service —
+  already the credential issuer (ADR-001) — owns harbor credentials in its
+  Postgres; sessions/attribution move control-plane-side too. The public
+  `POST /v1/radio/live/credentials` (+ `interrupt/live`, `DELETE …/:id`) surface
+  **stays on `radio`** so the consumer contract is unchanged; radio delegates
+  persistence + validation to the control plane over HTTPS.
+- **`radio` keeps only an ephemeral cache.** A short read-through cache (volatile,
+  lost on restart — *not* durable state) so a brief control-plane blip doesn't
+  immediately break harbor auth. A disposable cache does not violate "stateless."
+- **Slice 1's media-plane `bun:sqlite` store + the `funk_radio_state` volume are
+  removed.**
+
+**Accepted consequence:** validating a *new* harbor connection now requires the
+control plane reachable at connect time (mitigated by the cache for brief blips;
+in-flight streams are unaffected). We accept this in exchange for one source of
+truth and a genuinely stateless media plane. After this plus Slices 2 & 3, the
+media plane holds **zero durable state** — only the schedule `.m3u` (a file
+liquidsoap reads) and ephemeral caches.
+
+**New work — Slice 4:** move credentials/sessions to the control plane and strip
+the media-plane store. Sequenced **after** Slices 2 & 3 land (they remove the
+schedule cache and recordings index; Slice 4 removes the last store), so the
+radio refactor builds on a settled base rather than racing two other agents in
+the same file.
