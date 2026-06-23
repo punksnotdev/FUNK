@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { randomUUID, randomBytes } from "node:crypto";
-import { writeFile, mkdir } from "node:fs/promises";
+import { writeFile, mkdir, readFile, stat } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { env } from "./env";
 import {
@@ -134,11 +134,9 @@ interface ScheduleEntry {
 }
 
 interface ScheduleWindow {
-  applied_at: string;
+  applied_at: string | null;
   entries: ScheduleEntry[];
 }
-
-let appliedSchedule: ScheduleWindow | null = null;
 
 // Escape a value for use inside a liquidsoap annotate: key="value" pair.
 // Backslash first (so we don't double-escape the quotes we add), then quote.
@@ -146,6 +144,19 @@ let appliedSchedule: ScheduleWindow | null = null;
 // extra annotations (e.g. a title containing `",funk_source="live`).
 function escapeAnnotation(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+// Inverse of escapeAnnotation: collapse the liquidsoap annotate: escaping
+// (\" -> ", \\ -> \) when parsing the m3u back into entries.
+function unescapeAnnotation(value: string): string {
+  return value.replace(/\\(["\\])/g, "$1");
+}
+
+// Parse a single `title="..."` value out of an annotate: annotation list,
+// honoring backslash-escaped quotes so we stop at the real closing quote.
+function extractAnnotationTitle(annotations: string): string | undefined {
+  const m = annotations.match(/title="((?:\\.|[^"\\])*)"/);
+  return m ? unescapeAnnotation(m[1] ?? "") : undefined;
 }
 
 async function writePlaylist(entries: ScheduleEntry[]): Promise<void> {
@@ -165,6 +176,80 @@ async function writePlaylist(entries: ScheduleEntry[]): Promise<void> {
   await writeFile(env.SCHEDULE_FILE, lines.join("\n") + "\n", "utf8");
 }
 
+// Reverse writePlaylist(): the m3u file on the volume is the source of truth for
+// the schedule (it is what liquidsoap actually reads), so GET parses it back
+// instead of relying on volatile in-memory state that a restart would drop.
+// applied_at is the file's mtime; a missing file means "no schedule applied yet".
+async function readPlaylist(): Promise<ScheduleWindow> {
+  let raw: string;
+  let mtime: Date;
+  try {
+    raw = await readFile(env.SCHEDULE_FILE, "utf8");
+    mtime = (await stat(env.SCHEDULE_FILE)).mtime;
+  } catch {
+    return { applied_at: null, entries: [] };
+  }
+
+  const entries: ScheduleEntry[] = [];
+  // Per writePlaylist, each entry is an optional `#EXTINF:<dur>,<title>` line
+  // followed by an `annotate:funk_source="schedule"[,title="..."]:<audio_url>`
+  // line. Carry the #EXTINF over to the next playlist line.
+  let pendingTitle: string | undefined;
+  let pendingDuration: number | undefined;
+
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    if (trimmed.startsWith("#EXTINF:")) {
+      // #EXTINF:<dur>,<title>  — dur === -1 means "unknown" -> undefined.
+      const rest = trimmed.slice("#EXTINF:".length);
+      const comma = rest.indexOf(",");
+      const durStr = comma === -1 ? rest : rest.slice(0, comma);
+      const dur = Number.parseInt(durStr, 10);
+      pendingDuration = Number.isNaN(dur) || dur < 0 ? undefined : dur;
+      pendingTitle = comma === -1 ? undefined : rest.slice(comma + 1) || undefined;
+      continue;
+    }
+    if (trimmed.startsWith("#")) continue; // #EXTM3U or other comments
+
+    // Playlist line. Strip the annotate: prefix to recover the audio_url, and
+    // prefer the annotation title (it survives even without an #EXTINF line).
+    let audioUrl = trimmed;
+    let annotationTitle: string | undefined;
+    if (trimmed.startsWith("annotate:")) {
+      const body = trimmed.slice("annotate:".length);
+      // annotate:<annotations>:<uri> — the annotations are quoted key=val pairs,
+      // so the first colon that is OUTSIDE a quoted string separates uri from
+      // annotations. Walk the string tracking quote/escape state.
+      let inQuote = false;
+      let escaped = false;
+      let splitAt = -1;
+      for (let i = 0; i < body.length; i++) {
+        const ch = body[i];
+        if (escaped) { escaped = false; continue; }
+        if (ch === "\\") { escaped = true; continue; }
+        if (ch === '"') { inQuote = !inQuote; continue; }
+        if (ch === ":" && !inQuote) { splitAt = i; break; }
+      }
+      if (splitAt !== -1) {
+        annotationTitle = extractAnnotationTitle(body.slice(0, splitAt));
+        audioUrl = body.slice(splitAt + 1);
+      }
+    }
+
+    entries.push({
+      audio_url: audioUrl,
+      title: annotationTitle ?? pendingTitle,
+      duration_seconds: pendingDuration,
+    });
+    pendingTitle = undefined;
+    pendingDuration = undefined;
+  }
+
+  return { applied_at: mtime.toISOString(), entries };
+}
+
 // --- Recording attribution lookup -------------------------------------------
 //
 // Used by the daemon at upload time (GET /v1/radio/internal/recording-attribution)
@@ -172,6 +257,8 @@ async function writePlaylist(entries: ScheduleEntry[]): Promise<void> {
 // attribution can be baked into the storage key. This is the live-session
 // window match — distinct from the recordings *index* below (which is now
 // derived from storage, not held in memory).
+//
+// Find the session whose window contains started_at within ±30s tolerance.
 function findAttribution(
   mount: string,
   startedAt: string,
@@ -501,16 +588,17 @@ app.put("/v1/radio/schedule", async (c) => {
   // liquidsoap's reload_mode="watch" should pick up the new file, but poke it
   // explicitly in case the inotify event was missed.
   await reloadMainPlaylist().catch(() => {});
-  appliedSchedule = { applied_at: new Date().toISOString(), entries };
   return c.json({
     applied: true,
     entries: entries.length,
-    applied_at: appliedSchedule.applied_at,
+    applied_at: new Date().toISOString(),
   });
 });
 
-app.get("/v1/radio/schedule", (c) => {
-  return c.json(appliedSchedule ?? { applied_at: null, entries: [] });
+app.get("/v1/radio/schedule", async (c) => {
+  // Source of truth is the m3u file on the volume (what liquidsoap reads), so
+  // the schedule survives a radio restart — no in-memory cache to drop.
+  return c.json(await readPlaylist());
 });
 
 app.get("/v1/radio/now-playing", async (c) => {
