@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { PUBLIC_FUNK_HLS_URL } from "$env/static/public";
-  import type { NowPlaying, NowPlayingSource } from "$lib/funk/types";
+  import type { NowPlaying } from "$lib/funk/types";
 
   let audioEl: HTMLAudioElement | null = $state(null);
   let nowPlaying: NowPlaying | null = $state(null);
@@ -17,12 +17,28 @@
     return typeof t === "string" ? t : null;
   });
 
-  function sourceLabel(source: NowPlayingSource): string {
-    if (source === "live") return "Live broadcast";
-    if (source === "breaking") return "Breaking-news interrupt";
-    if (source === "schedule") return "Scheduled programming";
-    return source; // unknown / future source value
-  }
+  // Human-interesting track fields to surface from FUNK's free-form metadata,
+  // in display order — one metadata key each, so we show artist/year/etc. and
+  // skip the noisy technical tags. `title` is shown on its own above. These keys
+  // match the tags the /admin page attaches to a schedule entry.
+  const DISPLAY_FIELDS: { label: string; key: string }[] = [
+    { label: "artist", key: "artist" },
+    { label: "album", key: "album" },
+    { label: "year", key: "year" },
+    { label: "genre", key: "genre" },
+  ];
+
+  let metaEntries = $derived.by((): [string, string][] => {
+    const m = nowPlaying?.metadata;
+    if (!m) return [];
+    const out: [string, string][] = [];
+    for (const { label, key } of DISPLAY_FIELDS) {
+      const value = m[key];
+      if (typeof value === "string" && value.trim() !== "") out.push([label, value]);
+      else if (typeof value === "number") out.push([label, String(value)]);
+    }
+    return out;
+  });
 
   async function fetchNowPlaying() {
     try {
@@ -79,11 +95,7 @@
 </svelte:head>
 
 <section class="card">
-  <h2>radio</h2>
   <audio bind:this={audioEl} controls preload="none"></audio>
-  <p class="status">
-    stream: <code>{PUBLIC_FUNK_HLS_URL}</code> (anonymous — no token)
-  </p>
   {#if streamError}
     <p class="error">{streamError}</p>
   {/if}
@@ -96,18 +108,24 @@
 >
   <h2>now playing</h2>
   {#if nowPlaying}
-    <p class="source">{sourceLabel(nowPlaying.source)}</p>
     {#if title}
       <p class="title">{title}</p>
     {:else}
       <p class="muted">No title in metadata.</p>
+    {/if}
+    {#if metaEntries.length > 0}
+      <dl class="meta">
+        {#each metaEntries as [key, value] (key)}
+          <dt>{key}</dt>
+          <dd>{value}</dd>
+        {/each}
+      </dl>
     {/if}
   {:else if nowPlayingError}
     <p class="muted">Now-playing unavailable: <code>{nowPlayingError}</code></p>
   {:else}
     <p class="muted">Loading…</p>
   {/if}
-  <p class="status">via server proxy <code>/api/now-playing</code> (token stays server-side)</p>
 </section>
 
 <style>
@@ -137,22 +155,31 @@
   audio {
     width: 100%;
   }
-  .source {
-    margin: 0 0 0.25rem;
-    font-weight: 600;
-  }
   .title {
     margin: 0;
-    font-size: 1.1rem;
+    font-size: 1.5rem;
+    font-weight: 700;
+  }
+  .meta {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.3rem 0.85rem;
+    margin: 0.85rem 0 0;
+  }
+  .meta dt {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    opacity: 0.5;
+    align-self: center;
+  }
+  .meta dd {
+    margin: 0;
+    font-size: 0.9rem;
   }
   .muted {
     opacity: 0.6;
     font-size: 0.9rem;
-  }
-  .status {
-    font-size: 0.78rem;
-    opacity: 0.5;
-    margin: 0.75rem 0 0;
   }
   .error {
     color: #e23636;

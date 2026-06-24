@@ -29,13 +29,37 @@ export const actions: Actions = {
     const form = await request.formData();
     const audioUrl = String(form.get("audio_url") ?? "").trim();
     const title = String(form.get("title") ?? "").trim();
+    const artist = String(form.get("artist") ?? "").trim();
+    const album = String(form.get("album") ?? "").trim();
+    const yearRaw = String(form.get("year") ?? "").trim();
+    const genre = String(form.get("genre") ?? "").trim();
     const durationRaw = String(form.get("duration_seconds") ?? "").trim();
 
     // Preserve the operator's input so the form can be re-rendered on error.
-    const values = { audio_url: audioUrl, title, duration_seconds: durationRaw };
+    const values = {
+      audio_url: audioUrl,
+      title,
+      artist,
+      album,
+      year: yearRaw,
+      genre,
+      duration_seconds: durationRaw,
+    };
 
     if (!audioUrl) {
       return fail(400, { ...values, error: "audio_url is required." });
+    }
+
+    let year: number | undefined;
+    if (yearRaw.length > 0) {
+      const y = Number(yearRaw);
+      if (!Number.isInteger(y) || y <= 0) {
+        return fail(400, {
+          ...values,
+          error: "year must be a positive whole number.",
+        });
+      }
+      year = y;
     }
 
     let durationSeconds: number | undefined;
@@ -56,6 +80,10 @@ export const actions: Actions = {
           {
             audio_url: audioUrl,
             ...(title ? { title } : {}),
+            ...(artist ? { artist } : {}),
+            ...(album ? { album } : {}),
+            ...(year !== undefined ? { year } : {}),
+            ...(genre ? { genre } : {}),
             ...(durationSeconds !== undefined
               ? { duration_seconds: durationSeconds }
               : {}),

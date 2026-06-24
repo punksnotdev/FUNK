@@ -1,11 +1,11 @@
 // Subset of the FUNK radio contract this demo consumes.
 //
 // `source` is whatever the running stack reports for now-playing. The known
-// values today are "schedule" (scheduled programming), "live" (a live source
-// connected to harbor), "breaking" (a breaking-news interrupt) and "unknown"
-// (radio could not resolve a source). It's typed as a loose union so an
-// unfamiliar value from a newer FUNK still parses.
-export type NowPlayingSource = "schedule" | "live" | "breaking" | "unknown" | (string & {});
+// values today are "live" (a live source connected to harbor), "breaking" (a
+// breaking-news interrupt) and "unknown" (radio could not resolve a source).
+// It's typed as a loose union so an unfamiliar value from a newer FUNK still
+// parses.
+export type NowPlayingSource = "live" | "breaking" | "unknown" | (string & {});
 
 export interface NowPlaying {
   source: NowPlayingSource;
@@ -15,12 +15,18 @@ export interface NowPlaying {
 }
 
 // One programming entry in the radio schedule. Mirrors FUNK's ScheduleEntry:
-// only `audio_url` is required; `title` and `duration_seconds` are optional,
-// and `at` (start time) exists in the contract but this demo doesn't set it.
+// only `audio_url` is required; everything else is optional. `at` (start time)
+// exists in the contract but this demo doesn't set it. `artist`/`album`/`year`/
+// `genre` are curated track tags the admin can attach so now-playing can show
+// them.
 export interface ScheduleEntry {
   audio_url: string;
   at?: string;
   title?: string;
+  artist?: string;
+  album?: string;
+  year?: number;
+  genre?: string;
   duration_seconds?: number;
 }
 

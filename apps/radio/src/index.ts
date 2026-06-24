@@ -289,6 +289,10 @@ interface ScheduleEntry {
   at?: string;
   audio_url: string;
   title?: string;
+  artist?: string;
+  album?: string;
+  year?: number;
+  genre?: string;
   duration_seconds?: number;
 }
 
@@ -311,10 +315,12 @@ function unescapeAnnotation(value: string): string {
   return value.replace(/\\(["\\])/g, "$1");
 }
 
-// Parse a single `title="..."` value out of an annotate: annotation list,
-// honoring backslash-escaped quotes so we stop at the real closing quote.
-function extractAnnotationTitle(annotations: string): string | undefined {
-  const m = annotations.match(/title="((?:\\.|[^"\\])*)"/);
+// Parse a single `<key>="..."` value out of an annotate: annotation list,
+// honoring backslash-escaped quotes so we stop at the real closing quote. `key`
+// is always a fixed literal (title/artist/album/year/genre), so inlining it
+// into the pattern is safe.
+function extractAnnotation(annotations: string, key: string): string | undefined {
+  const m = annotations.match(new RegExp(key + '="((?:\\\\.|[^"\\\\])*)"'));
   return m ? unescapeAnnotation(m[1] ?? "") : undefined;
 }
 
@@ -324,12 +330,16 @@ async function writePlaylist(entries: ScheduleEntry[]): Promise<void> {
   for (const e of entries) {
     if (e.title) lines.push(`#EXTINF:${e.duration_seconds ?? -1},${e.title}`);
     // Attach per-track metadata via liquidsoap's annotate: protocol so the
-    // scheduled title surfaces in now-playing. The m3u #EXTINF title alone is
+    // scheduled tags surface in now-playing. The m3u #EXTINF title alone is
     // NOT propagated into the playing source's runtime metadata; annotations
     // are. funk_source marks these as schedule-driven so now-playing can report
     // a meaningful source instead of "unknown".
     const annotations = [`funk_source="schedule"`];
     if (e.title) annotations.push(`title="${escapeAnnotation(e.title)}"`);
+    if (e.artist) annotations.push(`artist="${escapeAnnotation(e.artist)}"`);
+    if (e.album) annotations.push(`album="${escapeAnnotation(e.album)}"`);
+    if (e.year !== undefined) annotations.push(`year="${e.year}"`);
+    if (e.genre) annotations.push(`genre="${escapeAnnotation(e.genre)}"`);
     lines.push(`annotate:${annotations.join(",")}:${e.audio_url}`);
   }
   await writeFile(env.SCHEDULE_FILE, lines.join("\n") + "\n", "utf8");
@@ -376,6 +386,10 @@ async function readPlaylist(): Promise<ScheduleWindow> {
     // prefer the annotation title (it survives even without an #EXTINF line).
     let audioUrl = trimmed;
     let annotationTitle: string | undefined;
+    let annotationArtist: string | undefined;
+    let annotationAlbum: string | undefined;
+    let annotationYear: string | undefined;
+    let annotationGenre: string | undefined;
     if (trimmed.startsWith("annotate:")) {
       const body = trimmed.slice("annotate:".length);
       // annotate:<annotations>:<uri> — the annotations are quoted key=val pairs,
@@ -392,14 +406,24 @@ async function readPlaylist(): Promise<ScheduleWindow> {
         if (ch === ":" && !inQuote) { splitAt = i; break; }
       }
       if (splitAt !== -1) {
-        annotationTitle = extractAnnotationTitle(body.slice(0, splitAt));
+        const ann = body.slice(0, splitAt);
+        annotationTitle = extractAnnotation(ann, "title");
+        annotationArtist = extractAnnotation(ann, "artist");
+        annotationAlbum = extractAnnotation(ann, "album");
+        annotationYear = extractAnnotation(ann, "year");
+        annotationGenre = extractAnnotation(ann, "genre");
         audioUrl = body.slice(splitAt + 1);
       }
     }
 
+    const year = annotationYear !== undefined ? Number(annotationYear) : undefined;
     entries.push({
       audio_url: audioUrl,
       title: annotationTitle ?? pendingTitle,
+      ...(annotationArtist ? { artist: annotationArtist } : {}),
+      ...(annotationAlbum ? { album: annotationAlbum } : {}),
+      ...(year !== undefined && Number.isFinite(year) ? { year } : {}),
+      ...(annotationGenre ? { genre: annotationGenre } : {}),
       duration_seconds: pendingDuration,
     });
     pendingTitle = undefined;
@@ -736,6 +760,10 @@ app.put("/v1/radio/schedule", async (c) => {
       audio_url: r.audio_url,
       at: typeof r.at === "string" ? r.at : undefined,
       title: typeof r.title === "string" ? r.title : undefined,
+      artist: typeof r.artist === "string" ? r.artist : undefined,
+      album: typeof r.album === "string" ? r.album : undefined,
+      year: typeof r.year === "number" ? r.year : undefined,
+      genre: typeof r.genre === "string" ? r.genre : undefined,
       duration_seconds: typeof r.duration_seconds === "number" ? r.duration_seconds : undefined,
     });
   }

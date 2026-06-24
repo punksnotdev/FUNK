@@ -4,8 +4,7 @@
 
 <main>
   <header>
-    <h1>FUNK <span class="version">listen demo</span></h1>
-    <p class="tagline">contract reference — anonymous HLS + server-proxied now-playing</p>
+    <h1>FUNK</h1>
   </header>
   {@render children()}
 </main>
@@ -30,15 +29,5 @@
     font-size: 2rem;
     margin: 0 0 0.25rem;
     letter-spacing: 0.05em;
-  }
-  .version {
-    font-size: 0.6em;
-    opacity: 0.5;
-    margin-left: 0.5em;
-  }
-  .tagline {
-    margin: 0;
-    opacity: 0.6;
-    font-size: 0.9rem;
   }
 </style>

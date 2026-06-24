@@ -40,6 +40,13 @@
           {#if entry.duration_seconds != null}
             <span class="dur">{entry.duration_seconds}s</span>
           {/if}
+          {#if entry.artist || entry.album || entry.year != null || entry.genre}
+            <span class="tags">
+              {[entry.artist, entry.album, entry.year, entry.genre]
+                .filter((v) => v != null && v !== "")
+                .join(" · ")}
+            </span>
+          {/if}
         </li>
       {/each}
     </ol>
@@ -72,6 +79,29 @@
     <label>
       <span>title</span>
       <input name="title" placeholder="optional" value={form?.title ?? ""} />
+    </label>
+    <label>
+      <span>artist</span>
+      <input name="artist" placeholder="optional" value={form?.artist ?? ""} />
+    </label>
+    <label>
+      <span>album</span>
+      <input name="album" placeholder="optional" value={form?.album ?? ""} />
+    </label>
+    <label>
+      <span>year</span>
+      <input
+        name="year"
+        type="number"
+        min="1"
+        step="1"
+        placeholder="optional"
+        value={form?.year ?? ""}
+      />
+    </label>
+    <label>
+      <span>genre</span>
+      <input name="genre" placeholder="optional" value={form?.genre ?? ""} />
     </label>
     <label>
       <span>duration_seconds</span>
@@ -133,6 +163,11 @@
     opacity: 0.7;
   }
   .dur {
+    font-size: 0.8rem;
+    opacity: 0.6;
+  }
+  .tags {
+    flex-basis: 100%;
     font-size: 0.8rem;
     opacity: 0.6;
   }
