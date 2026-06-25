@@ -1,0 +1,31 @@
+# FUNK admin demo — a CONSUMER of FUNK, deployed alongside the control plane so
+# it can be fronted by the same Caddy edge. It joins the control plane's private
+# network (external) and Caddy reverse-proxies admin.dev → demo:3000.
+#
+# Reads ./.env for both build-arg interpolation (PUBLIC_FUNK_HLS_URL) and the
+# container runtime env (FUNK_*, DEMO_*).
+name: funk-demo
+
+services:
+  demo:
+    build:
+      context: .
+      args:
+        PUBLIC_FUNK_HLS_URL: ${PUBLIC_FUNK_HLS_URL}
+    image: funk/demo:dev
+    restart: unless-stopped
+    env_file: .env
+    expose:
+      - "3000"
+    networks:
+      - control
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+networks:
+  control:
+    external: true
+    name: funk-control_control_private

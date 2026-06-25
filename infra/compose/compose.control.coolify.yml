@@ -1,0 +1,135 @@
+name: funk-control
+
+# Coolify variant of the control plane. Identical to compose.control.yml MINUS
+# the `caddy` edge service — under Coolify, Traefik owns :80/:443 and routes
+# domains to services (auth/storage/minio) via Coolify's per-service domains.
+# Everything else (postgres, minio, auth, storage) is unchanged.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - control_postgres_data:/var/lib/postgresql/data
+      - ../services/postgres-init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - control_private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+    volumes:
+      - control_minio_data:/data
+    networks:
+      - control_private
+    expose:
+      - "9000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      S3_BUCKET: ${S3_BUCKET:-funk-uploads}
+    networks:
+      - control_private
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing "local/$$S3_BUCKET"
+        echo "bucket $$S3_BUCKET ready"
+
+  auth:
+    build:
+      context: ../..
+      dockerfile: apps/auth/Dockerfile
+    image: funk/auth:dev
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${AUTH_PORT:-4001}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      TENANT_ID: ${TENANT_ID:-default}
+      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:?ADMIN_BOOTSTRAP_TOKEN is required}
+      AUTH_INTERNAL_SECRET: ${AUTH_INTERNAL_SECRET:?AUTH_INTERNAL_SECRET is required (guards auth's internal harbor endpoints; must match radio)}
+    networks:
+      - control_private
+    expose:
+      - "${AUTH_PORT:-4001}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${AUTH_PORT:-4001}/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  storage:
+    build:
+      context: ../..
+      dockerfile: apps/storage/Dockerfile
+    image: funk/storage:dev
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${STORAGE_PORT:-4002}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      AUTH_INTERNAL_URL: http://auth:${AUTH_PORT:-4001}
+      TENANT_ID: ${TENANT_ID:-default}
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:7490}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      S3_BUCKET: ${S3_BUCKET:-funk-uploads}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-104857600}
+    networks:
+      - control_private
+    expose:
+      - "${STORAGE_PORT:-4002}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${STORAGE_PORT:-4002}/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+networks:
+  control_private:
+    driver: bridge
+
+volumes:
+  control_postgres_data:
+  control_minio_data:
