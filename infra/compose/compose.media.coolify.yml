@@ -115,6 +115,7 @@ services:
       SCHEDULE_FILE: /etc/funk/schedule.m3u
       RECORDINGS_DIR: /var/funk/recordings
       RADIO_INTERNAL_SECRET: ${RADIO_INTERNAL_SECRET}
+      SERVICE_FQDN_RADIO_4003: /
     volumes:
       - funk_schedule:/etc/funk
       - funk_recordings:/var/funk/recordings
@@ -136,6 +137,8 @@ services:
     depends_on:
       hls:
         condition: service_healthy
+    environment:
+      SERVICE_FQDN_NGINX_8080: /
     volumes:
       - hlsdata:/usr/share/nginx/html/hls:ro
     networks:
