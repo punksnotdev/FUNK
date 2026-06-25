@@ -1,0 +1,158 @@
+name: funk-control
+# GENERATED per-env file (stage) — literal Traefik labels (Coolify escapes ${} in labels). Edit compose.control.coolify.yml + regenerate.
+
+# Coolify variant of the control plane. Identical to compose.control.yml MINUS
+# the `caddy` edge service — under Coolify, Traefik owns :80/:443 and routes
+# domains to services (auth/storage/minio) via Coolify's per-service domains.
+# Everything else (postgres, minio, auth, storage) is unchanged.
+
+services:
+  postgres:
+    build:
+      context: ./infra/services/postgres-init
+    image: funk/postgres:dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - control_postgres_data:/var/lib/postgresql/data
+    networks:
+      - control_private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fminio-stage.entryPoints=https"
+      - "traefik.http.routers.fminio-stage.rule=Host(`funk-files.stage.ciudadmonstruo.mx`)"
+      - "traefik.http.routers.fminio-stage.tls=true"
+      - "traefik.http.routers.fminio-stage.tls.certresolver=letsencrypt"
+      - "traefik.http.services.fminio-stage.loadbalancer.server.port=9000"
+    volumes:
+      - control_minio_data:/data
+    networks:
+      - control_private
+    expose:
+      - "9000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      S3_BUCKET: ${S3_BUCKET:-funk-uploads}
+    networks:
+      - control_private
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing "local/$$S3_BUCKET"
+        echo "bucket $$S3_BUCKET ready"
+
+  auth:
+    build:
+      context: .
+      dockerfile: apps/auth/Dockerfile
+    image: funk/auth:dev
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${AUTH_PORT:-4001}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      TENANT_ID: ${TENANT_ID:-default}
+      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN}
+      AUTH_INTERNAL_SECRET: ${AUTH_INTERNAL_SECRET}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fauth-stage.entryPoints=https"
+      - "traefik.http.routers.fauth-stage.rule=Host(`funk-auth.stage.ciudadmonstruo.mx`)"
+      - "traefik.http.routers.fauth-stage.tls=true"
+      - "traefik.http.routers.fauth-stage.tls.certresolver=letsencrypt"
+      - "traefik.http.services.fauth-stage.loadbalancer.server.port=4001"
+    networks:
+      - control_private
+    expose:
+      - "${AUTH_PORT:-4001}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${AUTH_PORT:-4001}/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  storage:
+    build:
+      context: .
+      dockerfile: apps/storage/Dockerfile
+    image: funk/storage:dev
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${STORAGE_PORT:-4002}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      AUTH_INTERNAL_URL: http://auth:${AUTH_PORT:-4001}
+      TENANT_ID: ${TENANT_ID:-default}
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:7490}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      S3_BUCKET: ${S3_BUCKET:-funk-uploads}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-104857600}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fstorage-stage.entryPoints=https"
+      - "traefik.http.routers.fstorage-stage.rule=Host(`funk-storage.stage.ciudadmonstruo.mx`)"
+      - "traefik.http.routers.fstorage-stage.tls=true"
+      - "traefik.http.routers.fstorage-stage.tls.certresolver=letsencrypt"
+      - "traefik.http.services.fstorage-stage.loadbalancer.server.port=4002"
+    networks:
+      - control_private
+    expose:
+      - "${STORAGE_PORT:-4002}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${STORAGE_PORT:-4002}/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+networks:
+  control_private:
+    driver: bridge
+
+volumes:
+  control_postgres_data:
+  control_minio_data:

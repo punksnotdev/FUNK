@@ -1,0 +1,210 @@
+name: funk-media
+# GENERATED per-env file (prod) — literal Traefik labels (Coolify escapes ${} in labels). Edit compose.media.coolify.yml + regenerate.
+
+# Coolify variant of the media plane. Identical to compose.media.yml MINUS the
+# `caddy` edge service — under Coolify, Traefik owns :80/:443 and routes the
+# stream (nginx) + radio API domains. Everything else is unchanged.
+
+services:
+  icecast:
+    image: infiniteproject/icecast:latest
+    restart: unless-stopped
+    environment:
+      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD}
+      ICECAST_ADMIN_PASSWORD: ${ICECAST_ADMIN_PASSWORD}
+      ICECAST_PASSWORD: ${ICECAST_RELAY_PASSWORD}
+    networks:
+      - media_private
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8000 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  recordings-init:
+    image: alpine:3.20
+    command:
+      - "sh"
+      - "-c"
+      - "mkdir -p /var/funk/recordings/live /var/funk/recordings/breaking && chown -R 10000:10000 /var/funk/recordings && chmod -R 0775 /var/funk/recordings"
+    volumes:
+      - funk_recordings:/var/funk/recordings
+    restart: "no"
+
+  liquidsoap:
+    build:
+      context: ./infra/services/liquidsoap
+    image: funk/liquidsoap:dev
+    restart: unless-stopped
+    depends_on:
+      icecast:
+        condition: service_healthy
+      recordings-init:
+        condition: service_completed_successfully
+    environment:
+      ICECAST_HOST: icecast
+      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD}
+      RADIO_INTERNAL_SECRET: ${RADIO_INTERNAL_SECRET}
+    volumes:
+      - funk_schedule:/etc/funk
+      - funk_recordings:/var/funk/recordings
+    networks:
+      - media_private
+    expose:
+      - "1234"
+      - "8001"
+      - "8002"
+    command: ["liquidsoap", "/etc/liquidsoap/funk.liq"]
+    healthcheck:
+      test:
+        - "CMD"
+        - "python3"
+        - "-c"
+        - "import socket,sys;s=socket.create_connection(('127.0.0.1',1234),2);s.sendall(b'help\\n');d=b''\nwhile True:\n  c=s.recv(1024)\n  if not c: break\n  d+=c\n  if b'END' in d: break\nsys.exit(0 if b'|' in d else 1)"
+      interval: 20s
+      timeout: 5s
+      retries: 10
+
+  hls:
+    build:
+      context: ./infra/services/media-hls
+    image: funk/media-hls:dev
+    restart: unless-stopped
+    depends_on:
+      icecast:
+        condition: service_healthy
+      liquidsoap:
+        condition: service_started
+    environment:
+      ICECAST_SOURCE_URL: ${ICECAST_SOURCE_URL}
+      HLS_DIR: /hls
+      SEGMENT_SECONDS: ${SEGMENT_SECONDS:-6}
+      PLAYLIST_SIZE: ${PLAYLIST_SIZE:-6}
+      FFMPEG_LOGLEVEL: ${FFMPEG_LOGLEVEL:-warning}
+    volumes:
+      - hlsdata:/hls
+    networks:
+      - media_private
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /hls/master.m3u8 && grep -q '#EXTM3U' /hls/master.m3u8"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  radio:
+    build:
+      context: .
+      dockerfile: apps/radio/Dockerfile
+    image: funk/radio:dev
+    restart: unless-stopped
+    depends_on:
+      liquidsoap:
+        condition: service_started
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${RADIO_PORT:-4003}
+      TENANT_ID: ${TENANT_ID:-default}
+      AUTH_URL: ${AUTH_URL}
+      AUTH_INTERNAL_SECRET: ${AUTH_INTERNAL_SECRET}
+      STORAGE_URL: ${STORAGE_URL}
+      STORAGE_PUBLIC_URL: ${STORAGE_PUBLIC_URL:-${STORAGE_URL}}
+      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN}
+      LIQUIDSOAP_HOST: liquidsoap
+      LIQUIDSOAP_TELNET_PORT: 1234
+      SCHEDULE_FILE: /etc/funk/schedule.m3u
+      RECORDINGS_DIR: /var/funk/recordings
+      RADIO_INTERNAL_SECRET: ${RADIO_INTERNAL_SECRET}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fradio-prod.entryPoints=https"
+      - "traefik.http.routers.fradio-prod.rule=Host(`funk-radio.prod.ciudadmonstruo.mx`)"
+      - "traefik.http.routers.fradio-prod.tls=true"
+      - "traefik.http.routers.fradio-prod.tls.certresolver=letsencrypt"
+      - "traefik.http.services.fradio-prod.loadbalancer.server.port=4003"
+    volumes:
+      - funk_schedule:/etc/funk
+      - funk_recordings:/var/funk/recordings
+    networks:
+      - media_private
+    expose:
+      - "${RADIO_PORT:-4003}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${RADIO_PORT:-4003}/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  nginx:
+    build:
+      context: ./infra/services/media-nginx
+    image: funk/media-nginx:dev
+    restart: unless-stopped
+    depends_on:
+      hls:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fnginx-prod.entryPoints=https"
+      - "traefik.http.routers.fnginx-prod.rule=Host(`funk-stream.prod.ciudadmonstruo.mx`)"
+      - "traefik.http.routers.fnginx-prod.tls=true"
+      - "traefik.http.routers.fnginx-prod.tls.certresolver=letsencrypt"
+      - "traefik.http.services.fnginx-prod.loadbalancer.server.port=8080"
+    volumes:
+      - hlsdata:/usr/share/nginx/html/hls:ro
+    networks:
+      - media_private
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/hls/master.m3u8 | grep -q '#EXTM3U'"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  recordings:
+    build:
+      context: .
+      dockerfile: apps/recordings/Dockerfile
+    image: funk/recordings:dev
+    restart: unless-stopped
+    depends_on:
+      recordings-init:
+        condition: service_completed_successfully
+      liquidsoap:
+        condition: service_started
+      radio:
+        condition: service_started
+    environment:
+      TZ: UTC
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${RECORDINGS_PORT:-4004}
+      AUTH_URL: ${RECORDINGS_AUTH_URL}
+      STORAGE_URL: ${STORAGE_URL}
+      STORAGE_PUBLIC_URL: ${STORAGE_PUBLIC_URL:-${STORAGE_URL}}
+      RADIO_URL: http://radio:${RADIO_PORT:-4003}
+      RADIO_INTERNAL_SECRET: ${RADIO_INTERNAL_SECRET}
+      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN}
+      RECORDINGS_DIR: /var/funk/recordings
+      STABILITY_SECONDS: ${STABILITY_SECONDS:-30}
+    volumes:
+      - funk_recordings:/var/funk/recordings
+    networks:
+      - media_private
+    expose:
+      - "${RECORDINGS_PORT:-4004}"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${RECORDINGS_PORT:-4004}/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+networks:
+  media_private:
+    driver: bridge
+
+volumes:
+  hlsdata:
+  funk_schedule:
+  funk_recordings:
