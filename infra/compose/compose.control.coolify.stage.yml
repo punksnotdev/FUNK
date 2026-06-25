@@ -1,5 +1,5 @@
 name: funk-control
-# GENERATED per-env file (stage) — do not edit; regenerate from compose.control.coolify.yml
+# GENERATED (stage)
 
 # Coolify variant of the control plane. Identical to compose.control.yml MINUS
 # the `caddy` edge service — under Coolify, Traefik owns :80/:443 and routes
@@ -124,7 +124,7 @@ services:
       minio:
         condition: service_healthy
       auth:
-        condition: service_healthy
+        condition: service_started
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: ${STORAGE_PORT:-4002}
