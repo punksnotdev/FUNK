@@ -1,5 +1,5 @@
 name: funk-control
-# GENERATED (demo)
+# GENERATED (demo) net=gya3cb1d88lm6hr2zbevohh6
 
 # Coolify variant of the control plane. Identical to compose.control.yml MINUS
 # the `caddy` edge service — under Coolify, Traefik owns :80/:443 and routes
@@ -20,7 +20,6 @@ services:
       - control_postgres_data:/var/lib/postgresql/data
     networks:
       - control_private
-      - coolify
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
@@ -36,7 +35,7 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=coolify"
+      - "traefik.docker.network=gya3cb1d88lm6hr2zbevohh6"
       - "traefik.http.routers.fminio-demo.entryPoints=https"
       - "traefik.http.routers.fminio-demo.rule=Host(`funk-files.demo.ciudadmonstruo.mx`)"
       - "traefik.http.routers.fminio-demo.tls=true"
@@ -46,7 +45,6 @@ services:
       - control_minio_data:/data
     networks:
       - control_private
-      - coolify
     expose:
       - "9000"
     healthcheck:
@@ -67,7 +65,6 @@ services:
       S3_BUCKET: ${S3_BUCKET:-funk-uploads}
     networks:
       - control_private
-      - coolify
     entrypoint:
       - /bin/sh
       - -c
@@ -95,7 +92,7 @@ services:
       AUTH_INTERNAL_SECRET: ${AUTH_INTERNAL_SECRET}
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=coolify"
+      - "traefik.docker.network=gya3cb1d88lm6hr2zbevohh6"
       - "traefik.http.routers.fauth-demo.entryPoints=https"
       - "traefik.http.routers.fauth-demo.rule=Host(`funk-auth.demo.ciudadmonstruo.mx`)"
       - "traefik.http.routers.fauth-demo.tls=true"
@@ -103,7 +100,6 @@ services:
       - "traefik.http.services.fauth-demo.loadbalancer.server.port=4001"
     networks:
       - control_private
-      - coolify
     expose:
       - "${AUTH_PORT:-4001}"
     healthcheck:
@@ -140,7 +136,7 @@ services:
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-104857600}
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=coolify"
+      - "traefik.docker.network=gya3cb1d88lm6hr2zbevohh6"
       - "traefik.http.routers.fstorage-demo.entryPoints=https"
       - "traefik.http.routers.fstorage-demo.rule=Host(`funk-storage.demo.ciudadmonstruo.mx`)"
       - "traefik.http.routers.fstorage-demo.tls=true"
@@ -148,7 +144,6 @@ services:
       - "traefik.http.services.fstorage-demo.loadbalancer.server.port=4002"
     networks:
       - control_private
-      - coolify
     expose:
       - "${STORAGE_PORT:-4002}"
     healthcheck:
@@ -160,8 +155,6 @@ services:
 networks:
   control_private:
     driver: bridge
-  coolify:
-    external: true
 
 volumes:
   control_postgres_data:

@@ -14,7 +14,6 @@ services:
       ICECAST_PASSWORD: ${ICECAST_RELAY_PASSWORD}
     networks:
       - media_private
-      - coolify
     expose:
       - "8000"
     healthcheck:
@@ -52,7 +51,6 @@ services:
       - funk_recordings:/var/funk/recordings
     networks:
       - media_private
-      - coolify
     expose:
       - "1234"
       - "8001"
@@ -88,7 +86,6 @@ services:
       - hlsdata:/hls
     networks:
       - media_private
-      - coolify
     healthcheck:
       test: ["CMD-SHELL", "test -f /hls/master.m3u8 && grep -q '#EXTM3U' /hls/master.m3u8"]
       interval: 15s
@@ -120,7 +117,7 @@ services:
       RADIO_INTERNAL_SECRET: ${RADIO_INTERNAL_SECRET}
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=coolify"
+      - "traefik.docker.network=NETPLACEHOLDER"
       - "traefik.http.routers.fradio-${COOLIFY_RESOURCE_UUID}.entryPoints=https"
       - "traefik.http.routers.fradio-${COOLIFY_RESOURCE_UUID}.rule=Host(`${RADIO_FQDN}`)"
       - "traefik.http.routers.fradio-${COOLIFY_RESOURCE_UUID}.tls=true"
@@ -131,7 +128,6 @@ services:
       - funk_recordings:/var/funk/recordings
     networks:
       - media_private
-      - coolify
     expose:
       - "${RADIO_PORT:-4003}"
     healthcheck:
@@ -150,7 +146,7 @@ services:
         condition: service_healthy
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=coolify"
+      - "traefik.docker.network=NETPLACEHOLDER"
       - "traefik.http.routers.fnginx-${COOLIFY_RESOURCE_UUID}.entryPoints=https"
       - "traefik.http.routers.fnginx-${COOLIFY_RESOURCE_UUID}.rule=Host(`${STREAM_FQDN}`)"
       - "traefik.http.routers.fnginx-${COOLIFY_RESOURCE_UUID}.tls=true"
@@ -160,7 +156,6 @@ services:
       - hlsdata:/usr/share/nginx/html/hls:ro
     networks:
       - media_private
-      - coolify
     expose:
       - "8080"
     healthcheck:
@@ -198,7 +193,6 @@ services:
       - funk_recordings:/var/funk/recordings
     networks:
       - media_private
-      - coolify
     expose:
       - "${RECORDINGS_PORT:-4004}"
     healthcheck:
@@ -210,8 +204,6 @@ services:
 networks:
   media_private:
     driver: bridge
-  coolify:
-    external: true
 
 volumes:
   hlsdata:

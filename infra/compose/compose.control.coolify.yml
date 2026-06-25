@@ -19,7 +19,6 @@ services:
       - control_postgres_data:/var/lib/postgresql/data
     networks:
       - control_private
-      - coolify
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
@@ -35,7 +34,7 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=coolify"
+      - "traefik.docker.network=NETPLACEHOLDER"
       - "traefik.http.routers.fminio-${COOLIFY_RESOURCE_UUID}.entryPoints=https"
       - "traefik.http.routers.fminio-${COOLIFY_RESOURCE_UUID}.rule=Host(`${FILES_FQDN}`)"
       - "traefik.http.routers.fminio-${COOLIFY_RESOURCE_UUID}.tls=true"
@@ -45,7 +44,6 @@ services:
       - control_minio_data:/data
     networks:
       - control_private
-      - coolify
     expose:
       - "9000"
     healthcheck:
@@ -66,7 +64,6 @@ services:
       S3_BUCKET: ${S3_BUCKET:-funk-uploads}
     networks:
       - control_private
-      - coolify
     entrypoint:
       - /bin/sh
       - -c
@@ -94,7 +91,7 @@ services:
       AUTH_INTERNAL_SECRET: ${AUTH_INTERNAL_SECRET}
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=coolify"
+      - "traefik.docker.network=NETPLACEHOLDER"
       - "traefik.http.routers.fauth-${COOLIFY_RESOURCE_UUID}.entryPoints=https"
       - "traefik.http.routers.fauth-${COOLIFY_RESOURCE_UUID}.rule=Host(`${AUTH_FQDN}`)"
       - "traefik.http.routers.fauth-${COOLIFY_RESOURCE_UUID}.tls=true"
@@ -102,7 +99,6 @@ services:
       - "traefik.http.services.fauth-${COOLIFY_RESOURCE_UUID}.loadbalancer.server.port=4001"
     networks:
       - control_private
-      - coolify
     expose:
       - "${AUTH_PORT:-4001}"
     healthcheck:
@@ -139,7 +135,7 @@ services:
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-104857600}
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=coolify"
+      - "traefik.docker.network=NETPLACEHOLDER"
       - "traefik.http.routers.fstorage-${COOLIFY_RESOURCE_UUID}.entryPoints=https"
       - "traefik.http.routers.fstorage-${COOLIFY_RESOURCE_UUID}.rule=Host(`${STORAGE_FQDN}`)"
       - "traefik.http.routers.fstorage-${COOLIFY_RESOURCE_UUID}.tls=true"
@@ -147,7 +143,6 @@ services:
       - "traefik.http.services.fstorage-${COOLIFY_RESOURCE_UUID}.loadbalancer.server.port=4002"
     networks:
       - control_private
-      - coolify
     expose:
       - "${STORAGE_PORT:-4002}"
     healthcheck:
@@ -159,8 +154,6 @@ services:
 networks:
   control_private:
     driver: bridge
-  coolify:
-    external: true
 
 volumes:
   control_postgres_data:
