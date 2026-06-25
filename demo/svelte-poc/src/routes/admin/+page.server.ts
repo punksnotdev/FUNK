@@ -25,9 +25,14 @@ export const load: PageServerLoad = async ({ fetch }) => {
 export const actions: Actions = {
   // Replace the whole schedule with a single entry built from the form.
   // PUT /v1/radio/schedule is a full replace — see the page note.
+  //
+  // The track source is EITHER an uploaded MP3 file (pushed to FUNK storage,
+  // whose stable /files/<key> URL becomes the audio_url) OR a directly-supplied
+  // audio_url. The file wins when both are present.
   default: async ({ request, fetch }) => {
     const form = await request.formData();
-    const audioUrl = String(form.get("audio_url") ?? "").trim();
+    let audioUrl = String(form.get("audio_url") ?? "").trim();
+    const file = form.get("file");
     const title = String(form.get("title") ?? "").trim();
     const artist = String(form.get("artist") ?? "").trim();
     const album = String(form.get("album") ?? "").trim();
@@ -35,7 +40,9 @@ export const actions: Actions = {
     const genre = String(form.get("genre") ?? "").trim();
     const durationRaw = String(form.get("duration_seconds") ?? "").trim();
 
-    // Preserve the operator's input so the form can be re-rendered on error.
+    // Preserve the operator's text input so the form can be re-rendered on error.
+    // (The file input can't be re-populated for security reasons — the operator
+    // re-picks it; we surface a clear error instead.)
     const values = {
       audio_url: audioUrl,
       title,
@@ -45,10 +52,6 @@ export const actions: Actions = {
       genre,
       duration_seconds: durationRaw,
     };
-
-    if (!audioUrl) {
-      return fail(400, { ...values, error: "audio_url is required." });
-    }
 
     let year: number | undefined;
     if (yearRaw.length > 0) {
@@ -72,6 +75,33 @@ export const actions: Actions = {
         });
       }
       durationSeconds = n;
+    }
+
+    // Upload path: an MP3 file was attached — push it to FUNK storage and use
+    // the returned stable URL as the schedule's audio_url. Metadata is stamped
+    // on the stored object too, so it can resurface in recordings listings.
+    const hasFile = file instanceof File && file.size > 0;
+    if (hasFile) {
+      const f = file as File;
+      const looksAudio =
+        f.type.startsWith("audio/") || /\.(mp3|mpeg|mpga)$/i.test(f.name);
+      if (!looksAudio) {
+        return fail(400, { ...values, error: "Uploaded file must be an MP3 / audio file." });
+      }
+      try {
+        const uploaded = await funk.storage.upload(
+          f,
+          { title, artist, album, year, genre, duration_seconds: durationSeconds },
+          fetch,
+        );
+        audioUrl = uploaded.url;
+      } catch (err) {
+        return fail(502, { ...values, error: (err as Error).message });
+      }
+    }
+
+    if (!audioUrl) {
+      return fail(400, { ...values, error: "Provide an MP3 file or an audio_url." });
     }
 
     try {

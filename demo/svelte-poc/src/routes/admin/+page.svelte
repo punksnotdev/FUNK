@@ -5,6 +5,12 @@
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   let entries = $derived(data.schedule.entries);
+  let fileName = $state("");
+
+  function onFileChange(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    fileName = input.files?.[0]?.name ?? "";
+  }
 </script>
 
 <svelte:head>
@@ -24,9 +30,7 @@
   {/if}
 
   {#if data.schedule.applied_at}
-    <p class="status">
-      applied at <code>{data.schedule.applied_at}</code>
-    </p>
+    <p class="status">applied at <code>{data.schedule.applied_at}</code></p>
   {:else}
     <p class="status">no schedule applied yet</p>
   {/if}
@@ -66,16 +70,30 @@
     <p class="error">{form.error}</p>
   {/if}
 
-  <form method="POST" use:enhance>
-    <label>
-      <span>audio_url <em>(required)</em></span>
-      <input
-        name="audio_url"
-        placeholder="file:///tmp/track.mp3 or https://…"
-        value={form?.audio_url ?? ""}
-        required
-      />
-    </label>
+  <form method="POST" enctype="multipart/form-data" use:enhance>
+    <fieldset class="source">
+      <legend>track source</legend>
+      <label class="file">
+        <span>upload mp3</span>
+        <input
+          name="file"
+          type="file"
+          accept="audio/mpeg,audio/mp3,.mp3"
+          onchange={onFileChange}
+        />
+        <span class="filehint">{fileName || "no file selected"}</span>
+      </label>
+      <div class="or"><span>or</span></div>
+      <label>
+        <span>audio_url</span>
+        <input
+          name="audio_url"
+          placeholder="https://… (ignored if a file is chosen)"
+          value={form?.audio_url ?? ""}
+        />
+      </label>
+    </fieldset>
+
     <label>
       <span>title</span>
       <input name="title" placeholder="optional" value={form?.title ?? ""} />
@@ -117,16 +135,15 @@
     <button type="submit">apply programming</button>
   </form>
   <p class="status">
-    routed server-side to <code>PUT /v1/radio/schedule</code> — the FUNK token
-    stays on the server.
+    a file is uploaded to <code>POST /v1/storage/uploads</code> then scheduled via
+    <code>PUT /v1/radio/schedule</code> — the FUNK token stays on the server.
   </p>
 </section>
 
 <style>
   .card {
-    background: #1a1a1f;
-    border: 1px solid #2a2a30;
-    border-radius: 8px;
+    background: var(--panel);
+    border: 1px solid var(--line);
     padding: 1.25rem 1.5rem;
     margin-bottom: 1.25rem;
   }
@@ -136,16 +153,20 @@
     justify-content: space-between;
   }
   h2 {
-    font-size: 0.9rem;
+    font-size: 0.82rem;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
-    opacity: 0.6;
+    letter-spacing: 0.12em;
+    color: var(--dim);
     margin: 0 0 0.75rem;
   }
+  h2::before {
+    content: "// ";
+    color: var(--line-2);
+  }
   .entries {
-    list-style: decimal;
+    list-style: none;
     margin: 0.5rem 0 0;
-    padding-left: 1.4rem;
+    padding: 0;
     display: flex;
     flex-direction: column;
     gap: 0.6rem;
@@ -155,32 +176,73 @@
     flex-wrap: wrap;
     align-items: baseline;
     gap: 0.5rem;
+    padding-left: 1rem;
+    border-left: 2px solid var(--line-2);
   }
   .title {
     font-weight: 600;
+    color: var(--bright);
   }
   .url {
-    opacity: 0.7;
+    color: var(--dim);
+    word-break: break-all;
   }
   .dur {
     font-size: 0.8rem;
-    opacity: 0.6;
+    color: var(--dim);
   }
   .tags {
     flex-basis: 100%;
     font-size: 0.8rem;
-    opacity: 0.6;
+    color: var(--dim);
   }
   .muted {
-    opacity: 0.6;
-    font-size: 0.9rem;
+    color: var(--dim);
+    font-size: 0.88rem;
     margin: 0 0 1rem;
+  }
+  strong {
+    color: var(--bright);
+    font-weight: 600;
   }
   form {
     display: flex;
     flex-direction: column;
     gap: 0.85rem;
-    max-width: 460px;
+    max-width: 480px;
+  }
+  fieldset.source {
+    border: 1px dashed var(--line-2);
+    padding: 1rem 1rem 1.1rem;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+  }
+  legend {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--dim);
+    padding: 0 0.4rem;
+  }
+  .or {
+    display: flex;
+    align-items: center;
+    text-align: center;
+    color: var(--line-2);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+  }
+  .or::before,
+  .or::after {
+    content: "";
+    flex: 1;
+    border-top: 1px solid var(--line);
+  }
+  .or span {
+    padding: 0 0.6rem;
   }
   label {
     display: flex;
@@ -188,69 +250,105 @@
     gap: 0.3rem;
     font-size: 0.85rem;
   }
-  label span {
+  label > span:first-child {
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    opacity: 0.6;
+    color: var(--dim);
+    font-size: 0.72rem;
   }
-  label em {
-    font-style: normal;
-    opacity: 0.7;
+  .filehint {
+    color: var(--dim);
+    font-size: 0.74rem;
   }
   input {
-    background: #0e0e10;
-    border: 1px solid #2a2a30;
-    border-radius: 6px;
-    color: #f0f0f0;
+    background: var(--bg);
+    border: 1px solid var(--line-2);
+    color: var(--fg);
     padding: 0.5rem 0.65rem;
-    font-size: 0.95rem;
+    font-family: var(--mono);
+    font-size: 0.9rem;
+    border-radius: 0;
+  }
+  input::placeholder {
+    color: #4d4d4d;
   }
   input:focus {
     outline: none;
-    border-color: #4a4a55;
+    border-color: var(--bright);
+  }
+  input[type="file"] {
+    padding: 0.45rem;
+    color: var(--dim);
+    font-size: 0.78rem;
+  }
+  input[type="file"]::file-selector-button {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--line-2);
+    padding: 0.3rem 0.7rem;
+    margin-right: 0.7rem;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+  }
+  input[type="file"]::file-selector-button:hover {
+    background: var(--fg);
+    color: var(--bg);
   }
   button {
     margin-top: 0.25rem;
-    background: #2563eb;
-    border: none;
-    border-radius: 6px;
-    color: #fff;
-    padding: 0.55rem 1rem;
-    font-size: 0.9rem;
-    font-weight: 600;
+    background: transparent;
+    border: 1px solid var(--bright);
+    color: var(--bright);
+    padding: 0.55rem 1.1rem;
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
     cursor: pointer;
     align-self: flex-start;
+    border-radius: 0;
+    transition:
+      background 0.12s,
+      color 0.12s;
   }
   button:hover {
-    background: #1d4ed8;
+    background: var(--bright);
+    color: var(--bg);
   }
   button.link {
     background: none;
-    color: #9aa4b2;
+    border: none;
+    color: var(--dim);
     padding: 0;
     margin: 0;
-    font-weight: 500;
     text-decoration: underline;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    font-size: 0.75rem;
+    font-size: 0.7rem;
   }
   button.link:hover {
-    color: #f0f0f0;
     background: none;
+    color: var(--bright);
   }
   .status {
-    font-size: 0.78rem;
-    opacity: 0.5;
+    font-size: 0.74rem;
+    color: var(--dim);
     margin: 0.75rem 0 0;
   }
   .error {
-    color: #e23636;
-    font-size: 0.85rem;
+    color: var(--bright);
+    background: #1c1c1c;
+    border-left: 2px solid var(--bright);
+    padding: 0.4rem 0.7rem;
+    font-size: 0.82rem;
     margin: 0 0 0.75rem;
   }
   code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--mono);
     font-size: 0.85em;
+    color: var(--fg);
   }
 </style>

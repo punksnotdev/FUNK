@@ -108,6 +108,9 @@
 >
   <h2>now playing</h2>
   {#if nowPlaying}
+    {#if nowPlaying.source === "live" || nowPlaying.source === "breaking"}
+      <p class="src-tag">[ {nowPlaying.source} ]</p>
+    {/if}
     {#if title}
       <p class="title">{title}</p>
     {:else}
@@ -130,35 +133,48 @@
 
 <style>
   .card {
-    background: #1a1a1f;
-    border: 1px solid #2a2a30;
-    border-radius: 8px;
+    background: var(--panel);
+    border: 1px solid var(--line);
     padding: 1.25rem 1.5rem;
     margin-bottom: 1.25rem;
-    transition: border-color 0.2s, background 0.2s;
+    transition: border-color 0.2s;
   }
+  /* Live / breaking states are signalled monochromatically: a brighter solid
+     border for live, a dashed border for breaking — no colour. */
   .now-playing.live {
-    border-color: #e23636;
-    background: #1c0e0e;
+    border-color: var(--bright);
   }
   .now-playing.breaking {
-    border-color: #e2a236;
-    background: #1c1407;
+    border-style: dashed;
+    border-color: var(--bright);
   }
   h2 {
-    font-size: 0.9rem;
+    font-size: 0.82rem;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
-    opacity: 0.6;
+    letter-spacing: 0.12em;
+    color: var(--dim);
     margin: 0 0 0.75rem;
+  }
+  h2::before {
+    content: "// ";
+    color: var(--line-2);
   }
   audio {
     width: 100%;
+    filter: grayscale(1) contrast(1.05);
+  }
+  .src-tag {
+    margin: 0 0 0.4rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--bright);
   }
   .title {
     margin: 0;
-    font-size: 1.5rem;
+    font-size: 1.4rem;
     font-weight: 700;
+    color: var(--bright);
   }
   .meta {
     display: grid;
@@ -167,27 +183,36 @@
     margin: 0.85rem 0 0;
   }
   .meta dt {
-    font-size: 0.72rem;
+    font-size: 0.7rem;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    opacity: 0.5;
+    color: var(--dim);
     align-self: center;
+  }
+  .meta dt::before {
+    content: "› ";
+    color: var(--line-2);
   }
   .meta dd {
     margin: 0;
     font-size: 0.9rem;
+    color: var(--fg);
   }
   .muted {
-    opacity: 0.6;
-    font-size: 0.9rem;
+    color: var(--dim);
+    font-size: 0.88rem;
   }
   .error {
-    color: #e23636;
-    font-size: 0.85rem;
+    color: var(--bright);
+    background: #1c1c1c;
+    border-left: 2px solid var(--bright);
+    padding: 0.4rem 0.7rem;
+    font-size: 0.82rem;
     margin-top: 0.5rem;
   }
   code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--mono);
     font-size: 0.85em;
+    color: var(--fg);
   }
 </style>

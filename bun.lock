@@ -29,6 +29,19 @@
         "typescript": "^5.7.2",
       },
     },
+    "apps/recordings": {
+      "name": "@funk/recordings",
+      "version": "0.0.1",
+      "dependencies": {
+        "@funk/shared": "workspace:*",
+        "chokidar": "^4.0.3",
+        "hono": "^4.6.14",
+      },
+      "devDependencies": {
+        "bun-types": "^1.2.7",
+        "typescript": "^5.7.2",
+      },
+    },
     "apps/storage": {
       "name": "@funk/storage",
       "version": "0.0.1",
@@ -187,6 +200,8 @@
     "@funk/demo-svelte-poc": ["@funk/demo-svelte-poc@workspace:demo/svelte-poc"],
 
     "@funk/radio": ["@funk/radio@workspace:apps/radio"],
+
+    "@funk/recordings": ["@funk/recordings@workspace:apps/recordings"],
 
     "@funk/shared": ["@funk/shared@workspace:packages/shared"],
 

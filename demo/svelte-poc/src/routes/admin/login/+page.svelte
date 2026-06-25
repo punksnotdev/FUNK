@@ -35,22 +35,25 @@
 
 <style>
   .card {
-    background: #1a1a1f;
-    border: 1px solid #2a2a30;
-    border-radius: 8px;
+    background: var(--panel);
+    border: 1px solid var(--line);
     padding: 1.25rem 1.5rem;
     margin-bottom: 1.25rem;
   }
   h2 {
-    font-size: 0.9rem;
+    font-size: 0.82rem;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
-    opacity: 0.6;
+    letter-spacing: 0.12em;
+    color: var(--dim);
     margin: 0 0 0.75rem;
   }
+  h2::before {
+    content: "// ";
+    color: var(--line-2);
+  }
   .muted {
-    opacity: 0.6;
-    font-size: 0.9rem;
+    color: var(--dim);
+    font-size: 0.88rem;
     margin: 0 0 1rem;
   }
   form {
@@ -68,37 +71,48 @@
   label span {
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    opacity: 0.6;
+    color: var(--dim);
+    font-size: 0.72rem;
   }
   input {
-    background: #0e0e10;
-    border: 1px solid #2a2a30;
-    border-radius: 6px;
-    color: #f0f0f0;
+    background: var(--bg);
+    border: 1px solid var(--line-2);
+    color: var(--fg);
     padding: 0.5rem 0.65rem;
-    font-size: 0.95rem;
+    font-family: var(--mono);
+    font-size: 0.9rem;
+    border-radius: 0;
   }
   input:focus {
     outline: none;
-    border-color: #4a4a55;
+    border-color: var(--bright);
   }
   button {
     margin-top: 0.25rem;
-    background: #2563eb;
-    border: none;
-    border-radius: 6px;
-    color: #fff;
-    padding: 0.55rem 1rem;
-    font-size: 0.9rem;
-    font-weight: 600;
+    background: transparent;
+    border: 1px solid var(--bright);
+    color: var(--bright);
+    padding: 0.55rem 1.1rem;
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
     cursor: pointer;
+    border-radius: 0;
+    transition:
+      background 0.12s,
+      color 0.12s;
   }
   button:hover {
-    background: #1d4ed8;
+    background: var(--bright);
+    color: var(--bg);
   }
   .error {
-    color: #e23636;
-    font-size: 0.85rem;
+    color: var(--bright);
+    background: #1c1c1c;
+    border-left: 2px solid var(--bright);
+    padding: 0.4rem 0.7rem;
+    font-size: 0.82rem;
     margin: 0 0 0.75rem;
   }
 </style>
