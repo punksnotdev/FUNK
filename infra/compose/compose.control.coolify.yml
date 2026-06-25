@@ -15,7 +15,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - control_postgres_data:/var/lib/postgresql/data
-      - ../services/postgres-init:/docker-entrypoint-initdb.d:ro
+      - ./infra/services/postgres-init:/docker-entrypoint-initdb.d:ro
     networks:
       - control_private
     healthcheck:
@@ -66,7 +66,7 @@ services:
 
   auth:
     build:
-      context: ../..
+      context: .
       dockerfile: apps/auth/Dockerfile
     image: funk/auth:dev
     restart: unless-stopped
@@ -92,7 +92,7 @@ services:
 
   storage:
     build:
-      context: ../..
+      context: .
       dockerfile: apps/storage/Dockerfile
     image: funk/storage:dev
     restart: unless-stopped
