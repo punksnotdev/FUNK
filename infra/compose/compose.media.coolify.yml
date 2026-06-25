@@ -9,9 +9,9 @@ services:
     image: infiniteproject/icecast:latest
     restart: unless-stopped
     environment:
-      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:?ICECAST_SOURCE_PASSWORD is required}
-      ICECAST_ADMIN_PASSWORD: ${ICECAST_ADMIN_PASSWORD:?ICECAST_ADMIN_PASSWORD is required}
-      ICECAST_PASSWORD: ${ICECAST_RELAY_PASSWORD:?ICECAST_RELAY_PASSWORD is required}
+      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD}
+      ICECAST_ADMIN_PASSWORD: ${ICECAST_ADMIN_PASSWORD}
+      ICECAST_PASSWORD: ${ICECAST_RELAY_PASSWORD}
     networks:
       - media_private
     expose:
@@ -43,7 +43,7 @@ services:
     environment:
       ICECAST_HOST: icecast
       ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD}
-      RADIO_INTERNAL_SECRET: ${RADIO_INTERNAL_SECRET:?RADIO_INTERNAL_SECRET is required}
+      RADIO_INTERNAL_SECRET: ${RADIO_INTERNAL_SECRET}
     volumes:
       - ../services/liquidsoap/funk.liq:/etc/liquidsoap/funk.liq:ro
       - funk_schedule:/etc/funk
@@ -76,7 +76,7 @@ services:
       liquidsoap:
         condition: service_started
     environment:
-      ICECAST_SOURCE_URL: ${ICECAST_SOURCE_URL:?ICECAST_SOURCE_URL is required}
+      ICECAST_SOURCE_URL: ${ICECAST_SOURCE_URL}
       HLS_DIR: /hls
       SEGMENT_SECONDS: ${SEGMENT_SECONDS:-6}
       PLAYLIST_SIZE: ${PLAYLIST_SIZE:-6}
@@ -104,11 +104,11 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: ${RADIO_PORT:-4003}
       TENANT_ID: ${TENANT_ID:-default}
-      AUTH_URL: ${AUTH_URL:?AUTH_URL is required}
-      AUTH_INTERNAL_SECRET: ${AUTH_INTERNAL_SECRET:?AUTH_INTERNAL_SECRET is required (shared secret radio sends to auth's internal harbor endpoints; must match auth)}
-      STORAGE_URL: ${STORAGE_URL:?STORAGE_URL is required}
+      AUTH_URL: ${AUTH_URL}
+      AUTH_INTERNAL_SECRET: ${AUTH_INTERNAL_SECRET}
+      STORAGE_URL: ${STORAGE_URL}
       STORAGE_PUBLIC_URL: ${STORAGE_PUBLIC_URL:-${STORAGE_URL}}
-      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:?ADMIN_BOOTSTRAP_TOKEN is required}
+      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN}
       LIQUIDSOAP_HOST: liquidsoap
       LIQUIDSOAP_TELNET_PORT: 1234
       SCHEDULE_FILE: /etc/funk/schedule.m3u
@@ -163,12 +163,12 @@ services:
       TZ: UTC
       NODE_ENV: ${NODE_ENV:-production}
       PORT: ${RECORDINGS_PORT:-4004}
-      AUTH_URL: ${RECORDINGS_AUTH_URL:?RECORDINGS_AUTH_URL is required (auth URL for recordings daemon)}
-      STORAGE_URL: ${STORAGE_URL:?STORAGE_URL is required}
+      AUTH_URL: ${RECORDINGS_AUTH_URL}
+      STORAGE_URL: ${STORAGE_URL}
       STORAGE_PUBLIC_URL: ${STORAGE_PUBLIC_URL:-${STORAGE_URL}}
       RADIO_URL: http://radio:${RADIO_PORT:-4003}
-      RADIO_INTERNAL_SECRET: ${RADIO_INTERNAL_SECRET:?RADIO_INTERNAL_SECRET is required}
-      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:?ADMIN_BOOTSTRAP_TOKEN is required}
+      RADIO_INTERNAL_SECRET: ${RADIO_INTERNAL_SECRET}
+      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN}
       RECORDINGS_DIR: /var/funk/recordings
       STABILITY_SECONDS: ${STABILITY_SECONDS:-30}
     volumes:
