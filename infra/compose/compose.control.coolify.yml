@@ -7,7 +7,9 @@ name: funk-control
 
 services:
   postgres:
-    image: postgres:16-alpine
+    build:
+      context: ./infra/services/postgres-init
+    image: funk/postgres:dev
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
@@ -15,7 +17,6 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - control_postgres_data:/var/lib/postgresql/data
-      - ./infra/services/postgres-init:/docker-entrypoint-initdb.d:ro
     networks:
       - control_private
     healthcheck:

@@ -33,7 +33,9 @@ services:
     restart: "no"
 
   liquidsoap:
-    image: savonet/liquidsoap:v2.2.5
+    build:
+      context: ./infra/services/liquidsoap
+    image: funk/liquidsoap:dev
     restart: unless-stopped
     depends_on:
       icecast:
@@ -45,7 +47,6 @@ services:
       ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD}
       RADIO_INTERNAL_SECRET: ${RADIO_INTERNAL_SECRET}
     volumes:
-      - ./infra/services/liquidsoap/funk.liq:/etc/liquidsoap/funk.liq:ro
       - funk_schedule:/etc/funk
       - funk_recordings:/var/funk/recordings
     networks:
@@ -128,14 +129,15 @@ services:
       retries: 10
 
   nginx:
-    image: nginx:1.27-alpine
+    build:
+      context: ./infra/services/media-nginx
+    image: funk/media-nginx:dev
     restart: unless-stopped
     depends_on:
       hls:
         condition: service_healthy
     volumes:
       - hlsdata:/usr/share/nginx/html/hls:ro
-      - ./infra/services/media-nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     networks:
       - media_private
     expose:
