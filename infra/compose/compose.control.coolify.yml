@@ -32,7 +32,13 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      SERVICE_FQDN_MINIO_9000: /
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fminio-${COOLIFY_RESOURCE_UUID}.entryPoints=https"
+      - "traefik.http.routers.fminio-${COOLIFY_RESOURCE_UUID}.rule=Host(`${FILES_FQDN}`)"
+      - "traefik.http.routers.fminio-${COOLIFY_RESOURCE_UUID}.tls=true"
+      - "traefik.http.routers.fminio-${COOLIFY_RESOURCE_UUID}.tls.certresolver=letsencrypt"
+      - "traefik.http.services.fminio-${COOLIFY_RESOURCE_UUID}.loadbalancer.server.port=9000"
     volumes:
       - control_minio_data:/data
     networks:
@@ -82,8 +88,13 @@ services:
       TENANT_ID: ${TENANT_ID:-default}
       ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN}
       AUTH_INTERNAL_SECRET: ${AUTH_INTERNAL_SECRET}
-      # Coolify: expose port 4001 publicly (domain pinned via docker_compose_domains)
-      SERVICE_FQDN_AUTH_4001: /
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fauth-${COOLIFY_RESOURCE_UUID}.entryPoints=https"
+      - "traefik.http.routers.fauth-${COOLIFY_RESOURCE_UUID}.rule=Host(`${AUTH_FQDN}`)"
+      - "traefik.http.routers.fauth-${COOLIFY_RESOURCE_UUID}.tls=true"
+      - "traefik.http.routers.fauth-${COOLIFY_RESOURCE_UUID}.tls.certresolver=letsencrypt"
+      - "traefik.http.services.fauth-${COOLIFY_RESOURCE_UUID}.loadbalancer.server.port=4001"
     networks:
       - control_private
     expose:
@@ -120,7 +131,13 @@ services:
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       S3_BUCKET: ${S3_BUCKET:-funk-uploads}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-104857600}
-      SERVICE_FQDN_STORAGE_4002: /
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fstorage-${COOLIFY_RESOURCE_UUID}.entryPoints=https"
+      - "traefik.http.routers.fstorage-${COOLIFY_RESOURCE_UUID}.rule=Host(`${STORAGE_FQDN}`)"
+      - "traefik.http.routers.fstorage-${COOLIFY_RESOURCE_UUID}.tls=true"
+      - "traefik.http.routers.fstorage-${COOLIFY_RESOURCE_UUID}.tls.certresolver=letsencrypt"
+      - "traefik.http.services.fstorage-${COOLIFY_RESOURCE_UUID}.loadbalancer.server.port=4002"
     networks:
       - control_private
     expose:
