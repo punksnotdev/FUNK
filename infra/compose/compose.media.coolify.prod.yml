@@ -1,5 +1,5 @@
 name: funk-media
-# GENERATED per-env file (prod) — literal Traefik labels (Coolify escapes ${} in labels). Edit compose.media.coolify.yml + regenerate.
+# GENERATED per-env file (prod) — do not edit; regenerate from compose.media.coolify.yml
 
 # Coolify variant of the media plane. Identical to compose.media.yml MINUS the
 # `caddy` edge service — under Coolify, Traefik owns :80/:443 and routes the
@@ -15,6 +15,7 @@ services:
       ICECAST_PASSWORD: ${ICECAST_RELAY_PASSWORD}
     networks:
       - media_private
+      - coolify
     expose:
       - "8000"
     healthcheck:
@@ -52,6 +53,7 @@ services:
       - funk_recordings:/var/funk/recordings
     networks:
       - media_private
+      - coolify
     expose:
       - "1234"
       - "8001"
@@ -87,6 +89,7 @@ services:
       - hlsdata:/hls
     networks:
       - media_private
+      - coolify
     healthcheck:
       test: ["CMD-SHELL", "test -f /hls/master.m3u8 && grep -q '#EXTM3U' /hls/master.m3u8"]
       interval: 15s
@@ -118,6 +121,7 @@ services:
       RADIO_INTERNAL_SECRET: ${RADIO_INTERNAL_SECRET}
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=coolify"
       - "traefik.http.routers.fradio-prod.entryPoints=https"
       - "traefik.http.routers.fradio-prod.rule=Host(`funk-radio.prod.ciudadmonstruo.mx`)"
       - "traefik.http.routers.fradio-prod.tls=true"
@@ -128,6 +132,7 @@ services:
       - funk_recordings:/var/funk/recordings
     networks:
       - media_private
+      - coolify
     expose:
       - "${RADIO_PORT:-4003}"
     healthcheck:
@@ -146,6 +151,7 @@ services:
         condition: service_healthy
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=coolify"
       - "traefik.http.routers.fnginx-prod.entryPoints=https"
       - "traefik.http.routers.fnginx-prod.rule=Host(`funk-stream.prod.ciudadmonstruo.mx`)"
       - "traefik.http.routers.fnginx-prod.tls=true"
@@ -155,6 +161,7 @@ services:
       - hlsdata:/usr/share/nginx/html/hls:ro
     networks:
       - media_private
+      - coolify
     expose:
       - "8080"
     healthcheck:
@@ -192,6 +199,7 @@ services:
       - funk_recordings:/var/funk/recordings
     networks:
       - media_private
+      - coolify
     expose:
       - "${RECORDINGS_PORT:-4004}"
     healthcheck:
@@ -203,6 +211,8 @@ services:
 networks:
   media_private:
     driver: bridge
+  coolify:
+    external: true
 
 volumes:
   hlsdata:
